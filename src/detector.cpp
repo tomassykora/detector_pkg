@@ -105,6 +105,7 @@ Eigen::Affine3f get_matrix(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, float *z_a
   return transform_matrix;
 }
 
+// Create a region of interest from the image
 sensor_msgs::Image select_image_area(const sensor_msgs::ImageConstPtr& img)
 {
   sensor_msgs::Image::Ptr img_area = boost::make_shared<sensor_msgs::Image>();
@@ -116,12 +117,11 @@ sensor_msgs::Image select_image_area(const sensor_msgs::ImageConstPtr& img)
   img_area->is_bigendian = img->is_bigendian;
   img_area->step = img->step;
 
-  img_area->data.resize(img_area->width * img_area->height);
+  img_area->data.resize(img_area->width * img_area->height * img_area->step);
 
   uint new_index = 0;
   for (uint row = img_area->height; row < img->height; row++)
   {
-    //int offset = row*img->step;
     for (uint col = 0; col < img->width; col++)
     {
       uint old_index = row+col*img->width;
@@ -203,8 +203,7 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
   // Try to recognize known objects
   std::vector<image_recognition_msgs::Recognition> recognitions;
   sensor_msgs::Image image_req = *image;
-  //sensor_msgs::Image image_req = select_image_area(image);
-  ROS_INFO_STREAM("Height: " << image_req.height << ", Width: " << image_req.width << ", Step: " << image_req.step << "Data vector size: " << image_req.data.size());
+  ROS_INFO_STREAM("Height: " << image_req.height << ", Width: " << image_req.width << ", Step: " << image_req.step << ", Data vector size: " << image_req.data.size());
 
   if (clusters.size() > 0) {
 
