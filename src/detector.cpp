@@ -202,8 +202,8 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
 
   // Try to recognize known objects
   std::vector<image_recognition_msgs::Recognition> recognitions;
-  //sensor_msgs::Image image_req = *image;
-  sensor_msgs::Image image_req = select_image_area(image);
+  sensor_msgs::Image image_req = *image;
+  //sensor_msgs::Image image_req = select_image_area(image);
   ROS_INFO_STREAM("Height: " << image_req.height << ", Width: " << image_req.width << ", Step: " << image_req.step << "Data vector size: " << image_req.data.size());
 
   if (clusters.size() > 0) {
