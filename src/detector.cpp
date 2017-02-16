@@ -42,6 +42,7 @@
 #include <image_recognition_msgs/Recognize.h>
 
 #define IMG_CUT 2
+#define UNKNOWN_PROB 0.61
 
 using namespace message_filters;
 
@@ -106,13 +107,14 @@ Eigen::Affine3f get_matrix(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, float *z_a
 }
 
 // Create a region of interest from the image
+// The computed region if specific for size of out robot and view angle of its sensors!  
 sensor_msgs::Image select_image_area(const sensor_msgs::ImageConstPtr& img)
 {
   sensor_msgs::Image::Ptr img_area = boost::make_shared<sensor_msgs::Image>();
 
   img_area->header = img->header;
   img_area->height = img->height / IMG_CUT;
-  img_area->width = img->width;
+  img_area->width = img->width - 20;
   img_area->encoding = img->encoding;
   img_area->is_bigendian = img->is_bigendian;
   img_area->step = img->step;
@@ -122,7 +124,7 @@ sensor_msgs::Image select_image_area(const sensor_msgs::ImageConstPtr& img)
   uint new_index = 0;
   for (uint row = img_area->height; row < img->height; row++)
   {
-    for (uint col = 0; col < img->width; col++)
+    for (uint col = 10; col < img->width-10; col++)
     {
       uint old_index = row+col*img->width;
       img_area->data[new_index++] = img->data[old_index];
@@ -132,9 +134,9 @@ sensor_msgs::Image select_image_area(const sensor_msgs::ImageConstPtr& img)
   return *img_area;
 }
 
-void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor_msgs::ImageConstPtr& image, ros::ServiceClient &client)
+void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor_msgs::ImageConstPtr& image, ros::ServiceClient &client, ros::NodeHandle &n)
 {
-  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+  /*pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
   pcl::fromROSMsg (*input, *cloud);
   float z_after_rotation;
   static Eigen::Affine3f transform_matrix = Eigen::Affine3f::Identity();
@@ -199,13 +201,16 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
 
   std::vector <pcl::PointIndices> clusters;
   reg.extract (clusters);  
-
+*/
   // Try to recognize known objects
   std::vector<image_recognition_msgs::Recognition> recognitions;
-  sensor_msgs::Image image_req = *image;
+  //sensor_msgs::Image image_req = *image;
+  sensor_msgs::Image image_req = select_image_area(image);
+
   ROS_INFO_STREAM("Height: " << image_req.height << ", Width: " << image_req.width << ", Step: " << image_req.step << ", Data vector size: " << image_req.data.size());
 
-  if (clusters.size() > 0) {
+  //if (clusters.size() > 0) {
+    if (1) {
 
     ROS_INFO_STREAM("Object(s) in front of the robot!");
 
@@ -220,7 +225,7 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
       for(std::vector<image_recognition_msgs::Recognition>::iterator i = recognitions.begin(); i != recognitions.end(); ++i) {
 	best.label = "unknown";
 	//best.probability = i->categorical_distribution.unknown_probability;
-        best.probability = 0.53;
+        best.probability = UNKNOWN_PROB;
 
 	for (unsigned int j = 0; j < i->categorical_distribution.probabilities.size(); j++) {
 	  if (i->categorical_distribution.probabilities[j].probability > best.probability)
@@ -229,7 +234,7 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
       }
     }
     //std::cout << "Best tip: " << best.label << std::endl;
-    if (best.probability <= 0.53)
+    if (best.label == "unknown")
       ROS_INFO_STREAM("Best tip: --unknown objects--");
     else
       ROS_INFO_STREAM("Best tip: --" << best.label << "--, with probability: " << best.probability);
@@ -256,7 +261,7 @@ int main (int argc, char** argv)
   // ApproximateTime takes a queue size as its constructor argument, hence MySyncPolicy(10)
   Synchronizer<MySyncPolicy> sync(MySyncPolicy(10), depth_sub, image_sub);
 
-  sync.registerCallback(boost::bind(&object_detector, _1, _2, boost::ref(client)));
+  sync.registerCallback(boost::bind(&object_detector, _1, _2, boost::ref(client), boost::ref(n)));
 
   // Spin
   ros::spin();
