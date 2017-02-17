@@ -23,5 +23,6 @@ Clone the repo in your catkin_ws:
         git clone https://github.com/tomassykora/detector_pkg.git
 
 Build your catkin workspace:
+
         cd ~/catkin_ws
         catkin_make
