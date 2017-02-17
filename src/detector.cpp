@@ -41,8 +41,8 @@
 #include <message_filters/sync_policies/approximate_time.h>
 #include <image_recognition_msgs/Recognize.h>
 
-#define IMG_CUT 2
-#define UNKNOWN_PROB 0.61
+#define IMG_CUT 0.75
+#define UNKNOWN_PROB_TRESHHOLD 0.61
 
 using namespace message_filters;
 
@@ -113,7 +113,7 @@ sensor_msgs::Image select_image_area(const sensor_msgs::ImageConstPtr& img)
   sensor_msgs::Image::Ptr img_area = boost::make_shared<sensor_msgs::Image>();
 
   img_area->header = img->header;
-  img_area->height = img->height / IMG_CUT;
+  img_area->height = img->height * IMG_CUT;
   img_area->width = img->width - 20;
   img_area->encoding = img->encoding;
   img_area->is_bigendian = img->is_bigendian;
@@ -136,7 +136,7 @@ sensor_msgs::Image select_image_area(const sensor_msgs::ImageConstPtr& img)
 
 void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor_msgs::ImageConstPtr& image, ros::ServiceClient &client, ros::NodeHandle &n)
 {
-  /*pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
   pcl::fromROSMsg (*input, *cloud);
   float z_after_rotation;
   static Eigen::Affine3f transform_matrix = Eigen::Affine3f::Identity();
@@ -148,13 +148,33 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
     transform_matrix = get_matrix(cloud, &z_after_rotation);
   }
 
+  // Select region of interest from point cloud by filering some points
+  pcl::PassThrough<pcl::PointXYZ> pass_window;
+  pass_window.setInputCloud (cloud);
+  pass_window.setFilterFieldName ("z");
+  pass_window.setFilterLimits (0.0, 2.5);
+  //pass.setFilterLimitsNegative (true);
+  pass_window.filter (*cloud);
+
+  pass_window.setInputCloud (cloud);
+  pass_window.setFilterFieldName ("x");
+  pass_window.setFilterLimits (-0.85, 0.85);
+  //pass_window.setFilterLimitsNegative (true);
+  pass_window.filter (*cloud);
+
+  pass_window.setInputCloud (cloud);
+  pass_window.setFilterFieldName ("y");
+  pass_window.setFilterLimits (-0.85, 0.85);
+  //pass_window.setFilterLimitsNegative (true);
+  pass_window.filter (*cloud);
+  
+
   if (ros::Time::now() - actual_time > (ros::Duration)(10)){
     actual_time = ros::Time::now();
     transform_matrix = get_matrix(cloud, &z_after_rotation);
     ROS_INFO_STREAM("Segmentation done.");
   }
-  
-
+ 
   // Transform the point cloud
   pcl::PointCloud<pcl::PointXYZ>::Ptr transformed_cloud (new pcl::PointCloud<pcl::PointXYZ> ());
   pcl::transformPointCloud (*cloud, *transformed_cloud, transform_matrix);
@@ -201,7 +221,7 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
 
   std::vector <pcl::PointIndices> clusters;
   reg.extract (clusters);  
-*/
+
   // Try to recognize known objects
   std::vector<image_recognition_msgs::Recognition> recognitions;
   //sensor_msgs::Image image_req = *image;
@@ -225,7 +245,7 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
       for(std::vector<image_recognition_msgs::Recognition>::iterator i = recognitions.begin(); i != recognitions.end(); ++i) {
 	best.label = "unknown";
 	//best.probability = i->categorical_distribution.unknown_probability;
-        best.probability = UNKNOWN_PROB;
+        best.probability = UNKNOWN_PROB_TRESHHOLD;
 
 	for (unsigned int j = 0; j < i->categorical_distribution.probabilities.size(); j++) {
 	  if (i->categorical_distribution.probabilities[j].probability > best.probability)
