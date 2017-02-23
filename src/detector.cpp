@@ -26,6 +26,7 @@
 #include <pcl/console/parse.h>
 #include <pcl/common/transforms.h>
 #include <pcl/visualization/pcl_visualizer.h>
+#include <pcl/visualization/cloud_viewer.h>
 #include <pcl/filters/passthrough.h>
 #include <pcl/search/search.h>
 #include <pcl/search/kdtree.h>
@@ -34,6 +35,7 @@
 #include <pcl_conversions/pcl_conversions.h>
 
 #include "ros/ros.h"
+#include <std_msgs/Bool.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <sensor_msgs/Image.h>
 #include <message_filters/subscriber.h>
@@ -134,9 +136,11 @@ sensor_msgs::Image select_image_area(const sensor_msgs::ImageConstPtr& img)
   return *img_area;
 }
 
-void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor_msgs::ImageConstPtr& image, ros::ServiceClient &client, ros::NodeHandle &n)
+//void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor_msgs::ImageConstPtr& image, ros::ServiceClient &client, ros::NodeHandle &n)
+void object_detector(const sensor_msgs::ImageConstPtr& image, ros::ServiceClient &client, ros::NodeHandle &n)
+//void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, ros::ServiceClient &client, ros::NodeHandle &n)
 {
-  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+  /*pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
   pcl::fromROSMsg (*input, *cloud);
   float z_after_rotation;
   static Eigen::Affine3f transform_matrix = Eigen::Affine3f::Identity();
@@ -152,7 +156,7 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
   pcl::PassThrough<pcl::PointXYZ> pass_window;
   pass_window.setInputCloud (cloud);
   pass_window.setFilterFieldName ("z");
-  pass_window.setFilterLimits (0.0, 2.5);
+  pass_window.setFilterLimits (0.0, 2.0);
   //pass.setFilterLimitsNegative (true);
   pass_window.filter (*cloud);
 
@@ -164,7 +168,7 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
 
   pass_window.setInputCloud (cloud);
   pass_window.setFilterFieldName ("y");
-  pass_window.setFilterLimits (-0.85, 0.85);
+  pass_window.setFilterLimits (-0.5, 0.5);
   //pass_window.setFilterLimitsNegative (true);
   pass_window.filter (*cloud);
   
@@ -209,28 +213,35 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
   pass2.filter (*indices);
 
   pcl::RegionGrowing<pcl::PointXYZ, pcl::Normal> reg;
-  reg.setMinClusterSize (100);
-  reg.setMaxClusterSize (1000000);
+  reg.setMinClusterSize (200);
+  reg.setMaxClusterSize (10000);
   reg.setSearchMethod (tree);
   reg.setNumberOfNeighbours (30);
   reg.setInputCloud (cloud_without_plane);
   //reg.setIndices (indices);
   reg.setInputNormals (normals);
-  reg.setSmoothnessThreshold (3.0 / 180.0 * M_PI);
-  reg.setCurvatureThreshold (1.0);
+  reg.setSmoothnessThreshold (11.0 / 180.0 * M_PI);
+  reg.setCurvatureThreshold (10.0);
 
   std::vector <pcl::PointIndices> clusters;
-  reg.extract (clusters);  
-
+  reg.extract (clusters); 
+  
+  ROS_INFO_STREAM("Found " << clusters.size() << " objects."); 
+*/
   // Try to recognize known objects
   std::vector<image_recognition_msgs::Recognition> recognitions;
   //sensor_msgs::Image image_req = *image;
   sensor_msgs::Image image_req = select_image_area(image);
+ros::Publisher image_pub = n.advertise<sensor_msgs::Image>("image", 1000);
+image_pub.publish(image_req); ros::spinOnce();
+
+  ros::Publisher objects_pub = n.advertise<std_msgs::Bool>("objects", 1000);
+  std_msgs::Bool found_objects;
 
   ROS_INFO_STREAM("Height: " << image_req.height << ", Width: " << image_req.width << ", Step: " << image_req.step << ", Data vector size: " << image_req.data.size());
 
   //if (clusters.size() > 0) {
-    if (1) {
+    /*if (1) {
 
     ROS_INFO_STREAM("Object(s) in front of the robot!");
 
@@ -238,7 +249,9 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
 
     srv.request.image = image_req;
     image_recognition_msgs::CategoryProbability best;
-  
+    best.label = "unknown";
+    best.probability = UNKNOWN_PROB_TRESHHOLD;
+ 
     if (client.call(srv)) {
       recognitions = srv.response.recognitions;
 
@@ -253,15 +266,33 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
 	}
       }
     }
-    //std::cout << "Best tip: " << best.label << std::endl;
-    if (best.label == "unknown")
+
+    if (best.label == "unknown") {
+
+      found_objects.data = false;
+
       ROS_INFO_STREAM("Best tip: --unknown objects--");
-    else
+    }
+    else {
+    
+      found_objects.data = true;
+
       ROS_INFO_STREAM("Best tip: --" << best.label << "--, with probability: " << best.probability);
+    }
   } 
   else {
     ROS_INFO_STREAM("Free space in front of the robot.");
   }
+
+  objects_pub.publish(found_objects);
+  ros::spinOnce();
+*/
+  /*pcl::PointCloud <pcl::PointXYZRGB>::Ptr colored_cloud = reg.getColoredCloud ();
+  pcl::visualization::CloudViewer viewer ("Cluster viewer");
+  viewer.showCloud(colored_cloud);
+  while (!viewer.wasStopped ())
+  {
+  }*/
 }
 
 int main (int argc, char** argv)
@@ -272,17 +303,17 @@ int main (int argc, char** argv)
   ros::ServiceClient client = n.serviceClient<image_recognition_msgs::Recognize>("recognize");
 
   // Create a ROS subscriber for the input point cloud
-  //ros::Subscriber sub = n.subscribe<sensor_msgs::PointCloud2> ("/camera/depth/points", 1, object_detector);
-  message_filters::Subscriber<sensor_msgs::PointCloud2> depth_sub(n, "/camera/depth/points", 1);
+  //ros::Subscriber sub = n.subscribe<sensor_msgs::PointCloud2> ("/camera/depth/points", 1, boost::bind(object_detector, _1, boost::ref(client), boost::ref(n)));
+  ros::Subscriber sub = n.subscribe<sensor_msgs::Image> ("/camera/rgb/image_raw", 1, boost::bind(object_detector, _1, boost::ref(client), boost::ref(n)));
+  /*message_filters::Subscriber<sensor_msgs::PointCloud2> depth_sub(n, "/camera/depth/points", 1);
   message_filters::Subscriber<sensor_msgs::Image> image_sub(n, "/camera/rgb/image_raw", 1);
-  //TimeSynchronizer<sensor_msgs::PointCloud2, sensor_msgs::Image> sync(depth_sub, image_sub, 10);
 
   typedef sync_policies::ApproximateTime<sensor_msgs::PointCloud2, sensor_msgs::Image> MySyncPolicy;
   // ApproximateTime takes a queue size as its constructor argument, hence MySyncPolicy(10)
   Synchronizer<MySyncPolicy> sync(MySyncPolicy(10), depth_sub, image_sub);
 
   sync.registerCallback(boost::bind(&object_detector, _1, _2, boost::ref(client), boost::ref(n)));
-
+*/
   // Spin
   ros::spin();
 
