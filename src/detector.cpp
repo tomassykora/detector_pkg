@@ -170,10 +170,10 @@ sensor_msgs::Image select_image_area(const sensor_msgs::ImageConstPtr& img)
 }
 
 //void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor_msgs::ImageConstPtr& image, ros::ServiceClient &client, ros::NodeHandle &n)
-void object_detector(const sensor_msgs::ImageConstPtr& image, ros::ServiceClient &client, ros::NodeHandle &n)
-//void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, ros::ServiceClient &client, ros::NodeHandle &n)
+//void object_detector(const sensor_msgs::ImageConstPtr& image, ros::ServiceClient &client, ros::NodeHandle &n)
+void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, ros::ServiceClient &client, ros::NodeHandle &n)
 {
-  /*pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
   pcl::fromROSMsg (*input, *cloud);
   float z_after_rotation;
   static Eigen::Affine3f transform_matrix = Eigen::Affine3f::Identity();
@@ -260,7 +260,15 @@ void object_detector(const sensor_msgs::ImageConstPtr& image, ros::ServiceClient
   reg.extract (clusters); 
   
   ROS_INFO_STREAM("Found " << clusters.size() << " objects."); 
-*/
+
+  for (int i = 0; i < clusters.size(); i++)
+  {
+    Eigen::Vector4f centroid;
+    pcl::compute3DCentroid (*cloud_without_plane, clusters[i], centroid);
+    ROS_INFO_STREAM(centroid[0] << " " <<  centroid[1] << " " <<   centroid[2] << " " <<   centroid[3]);
+    ROS_INFO_STREAM("y v 2d je: " << centroid[1]/centroid[2]+240); 
+  }
+/*
   // Try to recognize known objects
   std::vector<image_recognition_msgs::Recognition> recognitions;
   //sensor_msgs::Image image_req = *image;
@@ -276,7 +284,7 @@ loop_rate.sleep();
   std_msgs::Bool found_objects;
 
   ROS_INFO_STREAM("Height: " << image_req.height << ", Width: " << image_req.width << ", Step: " << image_req.step << ", Data vector size: " << image_req.data.size());
-
+*/
   //if (clusters.size() > 0) {
     /*if (1) {
 
@@ -340,8 +348,8 @@ int main (int argc, char** argv)
   ros::ServiceClient client = n.serviceClient<image_recognition_msgs::Recognize>("recognize");
 
   // Create a ROS subscriber for the input point cloud
-  //ros::Subscriber sub = n.subscribe<sensor_msgs::PointCloud2> ("/camera/depth/points", 1, boost::bind(object_detector, _1, boost::ref(client), boost::ref(n)));
-  ros::Subscriber sub = n.subscribe<sensor_msgs::Image> ("/camera/rgb/image_raw", 1, boost::bind(object_detector, _1, boost::ref(client), boost::ref(n)));
+  ros::Subscriber sub = n.subscribe<sensor_msgs::PointCloud2> ("/camera/depth/points", 1, boost::bind(object_detector, _1, boost::ref(client), boost::ref(n)));
+  //ros::Subscriber sub = n.subscribe<sensor_msgs::Image> ("/camera/rgb/image_raw", 1, boost::bind(object_detector, _1, boost::ref(client), boost::ref(n)));
   /*message_filters::Subscriber<sensor_msgs::PointCloud2> depth_sub(n, "/camera/depth/points", 1);
   message_filters::Subscriber<sensor_msgs::Image> image_sub(n, "/camera/rgb/image_raw", 1);
 
