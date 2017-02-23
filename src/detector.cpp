@@ -43,13 +43,46 @@
 #include <message_filters/sync_policies/approximate_time.h>
 #include <image_recognition_msgs/Recognize.h>
 
+#include <image_transport/image_transport.h>
+#include <cv_bridge/cv_bridge.h>
+#include <sensor_msgs/image_encodings.h>
+#include <opencv2/imgproc/imgproc.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include <opencv2/opencv.hpp>
+
 #define IMG_CUT 0.75
 #define UNKNOWN_PROB_TRESHHOLD 0.61
 
 using namespace message_filters;
+namespace enc = sensor_msgs::image_encodings;
 
 int first_time = 0;
 ros::Time actual_time;
+
+sensor_msgs::Image imageCb(const sensor_msgs::ImageConstPtr& msg)
+{
+  cv_bridge::CvImageConstPtr cv_ptr;
+  cv_bridge::CvImage img_roi_output;
+
+  try
+  {
+    cv_ptr = cv_bridge::toCvShare(msg, enc::BGR8);
+  }
+  catch (cv_bridge::Exception& e)
+  {
+    ROS_ERROR("cv_bridge exception: %s", e.what());
+  }
+
+  cv::Rect roi(100, 200, 70, 230);
+  img_roi_output.header = msg->header;
+  img_roi_output.encoding = enc::BGR8;
+  img_roi_output.image = cv_ptr->image(roi);
+  //img_roi_output.image = cv_ptr->image;
+ 
+  sensor_msgs::ImagePtr ros_msg_ptr = img_roi_output.toImageMsg(); 
+  return *ros_msg_ptr;
+}
+
 
 Eigen::Affine3f get_matrix(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, float *z_after_rotation)
 {
@@ -231,11 +264,15 @@ void object_detector(const sensor_msgs::ImageConstPtr& image, ros::ServiceClient
   // Try to recognize known objects
   std::vector<image_recognition_msgs::Recognition> recognitions;
   //sensor_msgs::Image image_req = *image;
-  sensor_msgs::Image image_req = select_image_area(image);
-ros::Publisher image_pub = n.advertise<sensor_msgs::Image>("image", 1000);
-image_pub.publish(image_req); ros::spinOnce();
+  //sensor_msgs::Image image_req = select_image_area(image);
+  sensor_msgs::Image image_req = imageCb(image);
+ros::Rate loop_rate(10);
+ros::Publisher image_pub = n.advertise<sensor_msgs::Image>("roi_image", 1000);
+image_pub.publish(image_req); 
+ros::spinOnce();
+loop_rate.sleep();
 
-  ros::Publisher objects_pub = n.advertise<std_msgs::Bool>("objects", 1000);
+  //ros::Publisher objects_pub = n.advertise<std_msgs::Bool>("objects", 1000);
   std_msgs::Bool found_objects;
 
   ROS_INFO_STREAM("Height: " << image_req.height << ", Width: " << image_req.width << ", Step: " << image_req.step << ", Data vector size: " << image_req.data.size());
