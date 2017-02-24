@@ -50,16 +50,17 @@
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/opencv.hpp>
 
-#define IMG_CUT 0.75
-#define UNKNOWN_PROB_TRESHHOLD 0.61
+#define UNKNOWN_PROB_TRESHHOLD 0.90
 
 using namespace message_filters;
 namespace enc = sensor_msgs::image_encodings;
 
 int first_time = 0;
 ros::Time actual_time;
+ros::Publisher image_pub;
+ros::Publisher objects_pub;
 
-sensor_msgs::Image imageCb(const sensor_msgs::ImageConstPtr& msg)
+sensor_msgs::Image imageCb(const sensor_msgs::ImageConstPtr& msg, int centroid_x, int centroid_y)
 {
   cv_bridge::CvImageConstPtr cv_ptr;
   cv_bridge::CvImage img_roi_output;
@@ -73,13 +74,42 @@ sensor_msgs::Image imageCb(const sensor_msgs::ImageConstPtr& msg)
     ROS_ERROR("cv_bridge exception: %s", e.what());
   }
 
-  cv::Rect roi(100, 200, 70, 230);
+  int x_offset, y_offset;
+
+  if (centroid_x-60 > 0)
+    x_offset = centroid_x-60;
+  else
+    x_offset = 0;
+
+  if (centroid_y-40 > 0)
+    y_offset = centroid_y-40;
+  else
+    y_offset = 0;
+
+  int rect_x, rect_y;
+
+  if (x_offset+120 > 639)
+    rect_x = 639-x_offset;
+  else
+    rect_x = 120;
+
+  if (y_offset+200 > 479)
+    rect_y = 479-y_offset;
+  else
+    rect_y = 200;
+
+  cv::Rect roi(x_offset, y_offset, rect_x, rect_y);
   img_roi_output.header = msg->header;
   img_roi_output.encoding = enc::BGR8;
   img_roi_output.image = cv_ptr->image(roi);
-  //img_roi_output.image = cv_ptr->image;
- 
+
+  int rand = random();
+  std::ostringstream name;
+  name << "file" << rand << ".jpg";
+  imwrite(name.str(), img_roi_output.image);
+
   sensor_msgs::ImagePtr ros_msg_ptr = img_roi_output.toImageMsg(); 
+
   return *ros_msg_ptr;
 }
 
@@ -141,40 +171,53 @@ Eigen::Affine3f get_matrix(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, float *z_a
   return transform_matrix;
 }
 
-// Create a region of interest from the image
-// The computed region if specific for size of out robot and view angle of its sensors!  
-sensor_msgs::Image select_image_area(const sensor_msgs::ImageConstPtr& img)
+int getIndex(float x, float y, float z, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud)
 {
-  sensor_msgs::Image::Ptr img_area = boost::make_shared<sensor_msgs::Image>();
+  float dist = 100.0;
+  int index = 0;
+  float retx, rety, retz, tmp_dist;
 
-  img_area->header = img->header;
-  img_area->height = img->height * IMG_CUT;
-  img_area->width = img->width - 20;
-  img_area->encoding = img->encoding;
-  img_area->is_bigendian = img->is_bigendian;
-  img_area->step = img->step;
+  ROS_INFO_STREAM("Finding most similar coords to: " << x << " " << y << " " << z);
 
-  img_area->data.resize(img_area->width * img_area->height * img_area->step);
-
-  uint new_index = 0;
-  for (uint row = img_area->height; row < img->height; row++)
+  for (int i = 280; i < 480; i++)
   {
-    for (uint col = 10; col < img->width-10; col++)
+    for (int j = 10; j < 630; j++)
     {
-      uint old_index = row+col*img->width;
-      img_area->data[new_index++] = img->data[old_index];
+      tmp_dist = sqrt(powf((cloud->points[i*640+j].x-x),2)+powf((cloud->points[i*640+j].y-y),2)+powf((cloud->points[i*640+j].z-z),2));
+      if (tmp_dist < dist) {
+        index = i * 640 + j;
+        dist = tmp_dist; 
+        /*retx = cloud->points[i*640+j].x;
+        rety = cloud->points[i*640+j].y;
+        retz = cloud->points[i*640+j].z;*/
+      }
     }
   }
- 
-  return *img_area;
+
+  /*ROS_INFO_STREAM("Using coords: " << retx << " " << rety << " " << retz);
+  ROS_INFO_STREAM("Return index: " << index);*/
+  return index;
 }
 
-//void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor_msgs::ImageConstPtr& image, ros::ServiceClient &client, ros::NodeHandle &n)
-//void object_detector(const sensor_msgs::ImageConstPtr& image, ros::ServiceClient &client, ros::NodeHandle &n)
-void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, ros::ServiceClient &client, ros::NodeHandle &n)
+int computeCentroidIndex(const std::vector<int> &indices)
 {
+  int centroid_index = 0;
+
+  for (size_t i = 0; i < indices.size (); ++i)
+  {
+    centroid_index += indices[i];
+  }
+
+  return (int)centroid_index/indices.size();
+}
+
+void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor_msgs::ImageConstPtr& image, ros::ServiceClient &client, ros::NodeHandle &n)
+//void object_detector(const sensor_msgs::ImageConstPtr& image, ros::ServiceClient &client, ros::NodeHandle &n)
+//void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, ros::ServiceClient &client, ros::NodeHandle &n)
+{
+  pcl::PointCloud<pcl::PointXYZ>::Ptr input_cloud(new pcl::PointCloud<pcl::PointXYZ>);
   pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
-  pcl::fromROSMsg (*input, *cloud);
+  pcl::fromROSMsg (*input, *input_cloud);
   float z_after_rotation;
   static Eigen::Affine3f transform_matrix = Eigen::Affine3f::Identity();
 
@@ -182,12 +225,12 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, ros::Service
     actual_time = ros::Time::now();
     first_time = 1;
     //std::cout << "actualtime: " << actual_time << std::endl;
-    transform_matrix = get_matrix(cloud, &z_after_rotation);
+    transform_matrix = get_matrix(input_cloud, &z_after_rotation);
   }
 
   // Select region of interest from point cloud by filering some points
   pcl::PassThrough<pcl::PointXYZ> pass_window;
-  pass_window.setInputCloud (cloud);
+  pass_window.setInputCloud (input_cloud);
   pass_window.setFilterFieldName ("z");
   pass_window.setFilterLimits (0.0, 2.0);
   //pass.setFilterLimitsNegative (true);
@@ -204,7 +247,6 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, ros::Service
   pass_window.setFilterLimits (-0.5, 0.5);
   //pass_window.setFilterLimitsNegative (true);
   pass_window.filter (*cloud);
-  
 
   if (ros::Time::now() - actual_time > (ros::Duration)(10)){
     actual_time = ros::Time::now();
@@ -261,51 +303,57 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, ros::Service
   
   ROS_INFO_STREAM("Found " << clusters.size() << " objects."); 
 
+  ros::Rate loop_rate(10);
   for (int i = 0; i < clusters.size(); i++)
   {
-    Eigen::Vector4f centroid;
-    pcl::compute3DCentroid (*cloud_without_plane, clusters[i], centroid);
-    ROS_INFO_STREAM(centroid[0] << " " <<  centroid[1] << " " <<   centroid[2] << " " <<   centroid[3]);
-    ROS_INFO_STREAM("y v 2d je: " << centroid[1]/centroid[2]+240); 
-  }
-/*
-  // Try to recognize known objects
-  std::vector<image_recognition_msgs::Recognition> recognitions;
-  //sensor_msgs::Image image_req = *image;
-  //sensor_msgs::Image image_req = select_image_area(image);
-  sensor_msgs::Image image_req = imageCb(image);
-ros::Rate loop_rate(10);
-ros::Publisher image_pub = n.advertise<sensor_msgs::Image>("roi_image", 1000);
-image_pub.publish(image_req); 
-ros::spinOnce();
-loop_rate.sleep();
 
-  //ros::Publisher objects_pub = n.advertise<std_msgs::Bool>("objects", 1000);
-  std_msgs::Bool found_objects;
-
-  ROS_INFO_STREAM("Height: " << image_req.height << ", Width: " << image_req.width << ", Step: " << image_req.step << ", Data vector size: " << image_req.data.size());
-*/
-  //if (clusters.size() > 0) {
-    /*if (1) {
-
+    ROS_INFO_STREAM("\n\n");
     ROS_INFO_STREAM("Object(s) in front of the robot!");
 
+    Eigen::Vector4f centroid;
+
+    pcl::compute3DCentroid (*cloud_without_plane, clusters[i], centroid);
+
+    ROS_INFO_STREAM("Computed centroid: " << centroid[0] << " " << centroid[1] << " " << centroid[2] << " " << centroid[3]);
+
+    int point_cloud_index = getIndex(centroid[0], centroid[1], centroid[2], input_cloud);
+    int x_2d = point_cloud_index % 640;
+    int y_2d = point_cloud_index / 640;
+
+    ROS_INFO_STREAM("Index from cluster: " << point_cloud_index);
+    ROS_INFO_STREAM("Object n. " << i << ": y in 2d is: " << y_2d);
+    ROS_INFO_STREAM("Object n. " << i << ": x in 2d is: " << x_2d); 
+  
+
+    // Try to recognize known objects
+    std::vector<image_recognition_msgs::Recognition> recognitions;
+    sensor_msgs::Image image_req = imageCb(image, x_2d, y_2d);
+
+    std_msgs::Bool found_objects;
+
+    ROS_INFO_STREAM("Height: " << image_req.height << ", Width: " << image_req.width << ", Step: " << image_req.step << ", Data vector size: " << image_req.data.size());
+
     image_recognition_msgs::Recognize srv;
+    image_recognition_msgs::CategoryProbability best;
 
     srv.request.image = image_req;
-    image_recognition_msgs::CategoryProbability best;
     best.label = "unknown";
     best.probability = UNKNOWN_PROB_TRESHHOLD;
+
+    bool found_known_object = false;
  
     if (client.call(srv)) {
+
       recognitions = srv.response.recognitions;
 
       for(std::vector<image_recognition_msgs::Recognition>::iterator i = recognitions.begin(); i != recognitions.end(); ++i) {
+
 	best.label = "unknown";
 	//best.probability = i->categorical_distribution.unknown_probability;
         best.probability = UNKNOWN_PROB_TRESHHOLD;
 
 	for (unsigned int j = 0; j < i->categorical_distribution.probabilities.size(); j++) {
+
 	  if (i->categorical_distribution.probabilities[j].probability > best.probability)
 	    best = i->categorical_distribution.probabilities[j];
 	}
@@ -314,24 +362,27 @@ loop_rate.sleep();
 
     if (best.label == "unknown") {
 
-      found_objects.data = false;
+      //found_objects.data = false;
 
-      ROS_INFO_STREAM("Best tip: --unknown objects--");
+      ROS_INFO_STREAM("BEST TIP: !---unknown objects---!");
     }
     else {
     
       found_objects.data = true;
+      found_known_object = true;
+      break;
 
-      ROS_INFO_STREAM("Best tip: --" << best.label << "--, with probability: " << best.probability);
+      ROS_INFO_STREAM("BEST TIP: !---" << best.label << "---!, with probability: " << best.probability);
     }
-  } 
-  else {
-    ROS_INFO_STREAM("Free space in front of the robot.");
-  }
 
   objects_pub.publish(found_objects);
-  ros::spinOnce();
-*/
+
+  if (found_known_objects) {
+  // 
+  }
+
+  } // for()
+
   /*pcl::PointCloud <pcl::PointXYZRGB>::Ptr colored_cloud = reg.getColoredCloud ();
   pcl::visualization::CloudViewer viewer ("Cluster viewer");
   viewer.showCloud(colored_cloud);
@@ -342,15 +393,17 @@ loop_rate.sleep();
 
 int main (int argc, char** argv)
 {
-  // Initialize ROS
+
   ros::init (argc, argv, "object_detector");
   ros::NodeHandle n;
   ros::ServiceClient client = n.serviceClient<image_recognition_msgs::Recognize>("recognize");
+  image_pub = n.advertise<sensor_msgs::Image>("roi_image", 1000);
+  objects_pub = n.advertise<std_msgs::Bool>("objects", 1000);
 
   // Create a ROS subscriber for the input point cloud
-  ros::Subscriber sub = n.subscribe<sensor_msgs::PointCloud2> ("/camera/depth/points", 1, boost::bind(object_detector, _1, boost::ref(client), boost::ref(n)));
+  //ros::Subscriber sub = n.subscribe<sensor_msgs::PointCloud2> ("/camera/depth/points", 1, boost::bind(object_detector, _1, boost::ref(client), boost::ref(n)));
   //ros::Subscriber sub = n.subscribe<sensor_msgs::Image> ("/camera/rgb/image_raw", 1, boost::bind(object_detector, _1, boost::ref(client), boost::ref(n)));
-  /*message_filters::Subscriber<sensor_msgs::PointCloud2> depth_sub(n, "/camera/depth/points", 1);
+  message_filters::Subscriber<sensor_msgs::PointCloud2> depth_sub(n, "/camera/depth/points", 1);
   message_filters::Subscriber<sensor_msgs::Image> image_sub(n, "/camera/rgb/image_raw", 1);
 
   typedef sync_policies::ApproximateTime<sensor_msgs::PointCloud2, sensor_msgs::Image> MySyncPolicy;
@@ -358,8 +411,7 @@ int main (int argc, char** argv)
   Synchronizer<MySyncPolicy> sync(MySyncPolicy(10), depth_sub, image_sub);
 
   sync.registerCallback(boost::bind(&object_detector, _1, _2, boost::ref(client), boost::ref(n)));
-*/
-  // Spin
+
   ros::spin();
 
   return 0;
