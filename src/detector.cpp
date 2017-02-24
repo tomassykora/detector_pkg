@@ -50,7 +50,12 @@
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/opencv.hpp>
 
+#include <move_base_msgs/MoveBaseAction.h>
+#include <actionlib/client/simple_action_client.h>
+
 #define UNKNOWN_PROB_TRESHHOLD 0.90
+
+typedef actionlib::SimpleActionClient<move_base_msgs::MoveBaseAction> MoveBaseClient;
 
 using namespace message_filters;
 namespace enc = sensor_msgs::image_encodings;
@@ -59,6 +64,8 @@ int first_time = 0;
 ros::Time actual_time;
 ros::Publisher image_pub;
 ros::Publisher objects_pub;
+bool manipulating = false;
+bool start_manipulating = false;
 
 sensor_msgs::Image imageCb(const sensor_msgs::ImageConstPtr& msg, int centroid_x, int centroid_y)
 {
@@ -103,10 +110,10 @@ sensor_msgs::Image imageCb(const sensor_msgs::ImageConstPtr& msg, int centroid_x
   img_roi_output.encoding = enc::BGR8;
   img_roi_output.image = cv_ptr->image(roi);
 
-  int rand = random();
+  /*int rand = random();
   std::ostringstream name;
   name << "file" << rand << ".jpg";
-  imwrite(name.str(), img_roi_output.image);
+  imwrite(name.str(), img_roi_output.image);*/
 
   sensor_msgs::ImagePtr ros_msg_ptr = img_roi_output.toImageMsg(); 
 
@@ -248,7 +255,7 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
   //pass_window.setFilterLimitsNegative (true);
   pass_window.filter (*cloud);
 
-  if (ros::Time::now() - actual_time > (ros::Duration)(10)){
+  if (ros::Time::now() - actual_time > (ros::Duration)(30)){
     actual_time = ros::Time::now();
     transform_matrix = get_matrix(cloud, &z_after_rotation);
     ROS_INFO_STREAM("Segmentation done.");
@@ -303,8 +310,11 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
   
   ROS_INFO_STREAM("Found " << clusters.size() << " objects."); 
 
-  ros::Rate loop_rate(10);
-  for (int i = 0; i < clusters.size(); i++)
+  float nav_goal_x, nav_goal_y, nav_goal_orientation;
+  bool found_known_object = false;
+  std_msgs::Bool found_objects;
+
+  for (int i = 0; i < clusters.size() && !manipulating; i++)
   {
 
     ROS_INFO_STREAM("\n\n");
@@ -324,12 +334,13 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
     ROS_INFO_STREAM("Object n. " << i << ": y in 2d is: " << y_2d);
     ROS_INFO_STREAM("Object n. " << i << ": x in 2d is: " << x_2d); 
   
+    nav_goal_x = centroid[1] * (-1) - 0.30;
+    nav_goal_y = centroid[0] * (-1) - 0.25;
+    nav_goal_orientation = centroid[0] * (-1);
 
     // Try to recognize known objects
     std::vector<image_recognition_msgs::Recognition> recognitions;
     sensor_msgs::Image image_req = imageCb(image, x_2d, y_2d);
-
-    std_msgs::Bool found_objects;
 
     ROS_INFO_STREAM("Height: " << image_req.height << ", Width: " << image_req.width << ", Step: " << image_req.step << ", Data vector size: " << image_req.data.size());
 
@@ -340,8 +351,6 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
     best.label = "unknown";
     best.probability = UNKNOWN_PROB_TRESHHOLD;
 
-    bool found_known_object = false;
- 
     if (client.call(srv)) {
 
       recognitions = srv.response.recognitions;
@@ -370,18 +379,53 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
     
       found_objects.data = true;
       found_known_object = true;
+      manipulating = true;
+
       break;
 
       ROS_INFO_STREAM("BEST TIP: !---" << best.label << "---!, with probability: " << best.probability);
     }
 
-  objects_pub.publish(found_objects);
+  } // for()
 
-  if (found_known_objects) {
-  // 
+  if (found_objects.data)
+    objects_pub.publish(found_objects);
+
+  if (start_manipulating) {
+
+    MoveBaseClient ac("move_base", true);
+
+    while(!ac.waitForServer(ros::Duration(2.0))){
+      ROS_INFO("Waiting for the move_base action server to come up");
+    }
+
+    move_base_msgs::MoveBaseGoal goal;
+
+    goal.target_pose.header.frame_id = "base_footprint";
+    goal.target_pose.header.stamp = ros::Time::now();
+
+    goal.target_pose.pose.position.x = nav_goal_x;
+    goal.target_pose.pose.position.y = nav_goal_y;
+    //goal.target_pose.pose.orientation.y = nav_goal_orientation;
+    goal.target_pose.pose.orientation.w = 1.0;
+
+    ROS_INFO("Sending goal");
+    ac.sendGoal(goal);
+
+    ac.waitForResult();
+
+    if(ac.getState() == actionlib::SimpleClientGoalState::SUCCEEDED)
+      ROS_INFO("Hooray, the base moved 1 meter forward");
+    else
+      ROS_INFO("The base failed to move forward 1 meter for some reason");
+
+    manipulating = false;
+    start_manipulating = false;
   }
 
-  } // for()
+  if (found_known_object)
+    start_manipulating = true;
+
 
   /*pcl::PointCloud <pcl::PointXYZRGB>::Ptr colored_cloud = reg.getColoredCloud ();
   pcl::visualization::CloudViewer viewer ("Cluster viewer");
