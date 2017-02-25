@@ -65,6 +65,7 @@ ros::Time actual_time;
 ros::Publisher image_pub;
 ros::Publisher objects_pub;
 bool start_manipulating = false;
+float nav_goal_x, nav_goal_y, nav_goal_orientation;
 
 sensor_msgs::Image imageCb(const sensor_msgs::ImageConstPtr& msg, int centroid_x, int centroid_y)
 {
@@ -228,7 +229,7 @@ int computeCentroidIndex(const std::vector<int> &indices)
   return (int)centroid_index/indices.size();
 }
 
-void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor_msgs::ImageConstPtr& image, ros::ServiceClient &client, ros::NodeHandle &n)
+void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor_msgs::ImageConstPtr& image, ros::ServiceClient &client, ros::NodeHandle &n, MoveBaseClient &ac)
 //void object_detector(const sensor_msgs::ImageConstPtr& image, ros::ServiceClient &client, ros::NodeHandle &n)
 //void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, ros::ServiceClient &client, ros::NodeHandle &n)
 {
@@ -321,7 +322,6 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
   
   ROS_INFO_STREAM("Found " << clusters.size() << " objects."); 
 
-  float nav_goal_x, nav_goal_y, nav_goal_orientation;
   bool found_known_object = false;
   std_msgs::Bool found_objects;
 
@@ -388,7 +388,11 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
     }
     else 
     {
+      ac.cancelAllGoals();
+
       found_objects.data = true;
+      objects_pub.publish(found_objects);
+
       found_known_object = true;
 
       ROS_INFO_STREAM("BEST TIP: !---" << best.label << "---!, with probability: " << best.probability);
@@ -400,19 +404,18 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
   
   } // for()
 
-  if (found_objects.data)
-    objects_pub.publish(found_objects);
-
-  if (start_manipulating) 
+  if (found_known_object)
   {
-    MoveBaseClient ac("move_base", true);
+    start_manipulating = true;
+
+    /*MoveBaseClient ac("move_base", true);
 
     while(!ac.waitForServer(ros::Duration(2.0)))
     {
       ROS_INFO("Waiting for the move_base action server to come up");
     }
 
-    ac.cancelAllGoals();
+    ac.cancelAllGoals();*/
 
     move_base_msgs::MoveBaseGoal goal;
 
@@ -430,16 +433,13 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
 
     ac.waitForResult();
 
-    if(ac.getState() == actionlib::SimpleClientGoalState::SUCCEEDED)
+    if (ac.getState() == actionlib::SimpleClientGoalState::SUCCEEDED)
       ROS_INFO("The robot moved to the object.");
     else
       ROS_INFO("A problem occured while moving to the object.");
 
     start_manipulating = false;
   }
-
-  if (found_known_object)
-    start_manipulating = true;
 
 
   /*pcl::PointCloud <pcl::PointXYZRGB>::Ptr colored_cloud = reg.getColoredCloud ();
@@ -454,11 +454,18 @@ int main (int argc, char** argv)
 {
   ros::init (argc, argv, "object_detector");
   ros::NodeHandle n;
+
   ros::ServiceClient client = n.serviceClient<image_recognition_msgs::Recognize>("recognize");
+  MoveBaseClient ac("move_base", true);
+
+  while(!ac.waitForServer(ros::Duration(2.0)))
+  {
+    ROS_INFO("Waiting for the move_base action server to come up");
+  }
+
   image_pub = n.advertise<sensor_msgs::Image>("roi_image", 1000);
   objects_pub = n.advertise<std_msgs::Bool>("objects", 1000);
 
-  // Create a ROS subscriber for the input point cloud
   //ros::Subscriber sub = n.subscribe<sensor_msgs::PointCloud2> ("/camera/depth/points", 1, boost::bind(object_detector, _1, boost::ref(client), boost::ref(n)));
   //ros::Subscriber sub = n.subscribe<sensor_msgs::Image> ("/camera/rgb/image_raw", 1, boost::bind(object_detector, _1, boost::ref(client), boost::ref(n)));
   message_filters::Subscriber<sensor_msgs::PointCloud2> depth_sub(n, "/camera/depth/points", 1);
@@ -468,7 +475,7 @@ int main (int argc, char** argv)
   // ApproximateTime takes a queue size as its constructor argument, hence MySyncPolicy(10)
   Synchronizer<MySyncPolicy> sync(MySyncPolicy(10), depth_sub, image_sub);
 
-  sync.registerCallback(boost::bind(&object_detector, _1, _2, boost::ref(client), boost::ref(n)));
+  sync.registerCallback(boost::bind(&object_detector, _1, _2, boost::ref(client), boost::ref(n), boost::ref(ac)));
 
   ros::spin();
 
