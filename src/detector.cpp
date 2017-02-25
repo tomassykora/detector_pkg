@@ -301,12 +301,12 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
   normal_estimator.setKSearch (100);
   normal_estimator.compute (*normals);
 
-  pcl::IndicesPtr indices (new std::vector <int>);
+  /*pcl::IndicesPtr indices (new std::vector <int>);
   pcl::PassThrough<pcl::PointXYZ> pass2;
   pass2.setInputCloud (cloud_without_plane);
   pass2.setFilterFieldName ("z");
   pass2.setFilterLimits (0.0, 1.0);
-  pass2.filter (*indices);
+  pass2.filter (*indices);*/
 
   pcl::RegionGrowing<pcl::PointXYZ, pcl::Normal> reg;
   reg.setMinClusterSize (1800);
@@ -368,6 +368,11 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
     best.label = "unknown";
     best.probability = UNKNOWN_PROB_TRESHHOLD;
 
+    /* Stop exploration, because recognizing takes long time (seconds). */
+    ac.cancelAllGoals();
+    found_objects.data = true;
+    objects_pub.publish(found_objects);
+
     // Try to recognize known objects
     if (client.call(srv)) 
     {
@@ -375,15 +380,15 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
 
       for(std::vector<image_recognition_msgs::Recognition>::iterator i = recognitions.begin(); i != recognitions.end(); ++i) 
       {
-	best.label = "unknown";
-	//best.probability = i->categorical_distribution.unknown_probability;
+	    best.label = "unknown";
+	    //best.probability = i->categorical_distribution.unknown_probability;
         best.probability = UNKNOWN_PROB_TRESHHOLD;
 
-	for (unsigned int j = 0; j < i->categorical_distribution.probabilities.size(); j++) 
+	    for (unsigned int j = 0; j < i->categorical_distribution.probabilities.size(); j++) 
         {
-	  if (i->categorical_distribution.probabilities[j].probability > best.probability)
-	    best = i->categorical_distribution.probabilities[j];
-	}
+	      if (i->categorical_distribution.probabilities[j].probability > best.probability)
+	        best = i->categorical_distribution.probabilities[j];
+	    }
       }
     }
 
