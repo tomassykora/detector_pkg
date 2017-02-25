@@ -53,7 +53,7 @@
 #include <move_base_msgs/MoveBaseAction.h>
 #include <actionlib/client/simple_action_client.h>
 
-#define UNKNOWN_PROB_TRESHHOLD 0.94
+#define UNKNOWN_PROB_TRESHHOLD 0.95
 
 typedef actionlib::SimpleActionClient<move_base_msgs::MoveBaseAction> MoveBaseClient;
 
@@ -264,7 +264,7 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
 
   pass_window.setInputCloud (cloud);
   pass_window.setFilterFieldName ("y");
-  pass_window.setFilterLimits (-0.5, 0.5);
+  pass_window.setFilterLimits (-0.1, 0.3);
   //pass_window.setFilterLimitsNegative (true);
   pass_window.filter (*cloud);
 
@@ -309,7 +309,7 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
   pass2.filter (*indices);
 
   pcl::RegionGrowing<pcl::PointXYZ, pcl::Normal> reg;
-  reg.setMinClusterSize (200);
+  reg.setMinClusterSize (1800);
   reg.setMaxClusterSize (10000);
   reg.setSearchMethod (tree);
   reg.setNumberOfNeighbours (30);
@@ -398,8 +398,7 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
 
       found_objects.data = true;
       objects_pub.publish(found_objects);
-
-      found_known_object = true;
+      //found_known_object = true;
 
       ROS_INFO_STREAM("BEST TIP: !---" << best.label << "---!, with probability: " << best.probability);
 
@@ -467,12 +466,12 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
   }
 
 
-  /*pcl::PointCloud <pcl::PointXYZRGB>::Ptr colored_cloud = reg.getColoredCloud ();
+  pcl::PointCloud <pcl::PointXYZRGB>::Ptr colored_cloud = reg.getColoredCloud ();
   pcl::visualization::CloudViewer viewer ("Cluster viewer");
   viewer.showCloud(colored_cloud);
   while (!viewer.wasStopped ())
   {
-  }*/
+  }
 }
 
 int main (int argc, char** argv)
