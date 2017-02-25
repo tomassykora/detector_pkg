@@ -64,7 +64,6 @@ int first_time = 0;
 ros::Time actual_time;
 ros::Publisher image_pub;
 ros::Publisher objects_pub;
-bool manipulating = false;
 bool start_manipulating = false;
 
 sensor_msgs::Image imageCb(const sensor_msgs::ImageConstPtr& msg, int centroid_x, int centroid_y)
@@ -160,8 +159,15 @@ Eigen::Affine3f get_matrix(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, float *z_a
   xy_plane_normal_vector[2] = 1.0;
 
   // Get angle between XY plane normal and floor plane normal
-  float theta = acos((floor_plane_normal_vector[0] * xy_plane_normal_vector[0] + floor_plane_normal_vector[1] * xy_plane_normal_vector[1] + floor_plane_normal_vector[2] * xy_plane_normal_vector[2]) 
-    / (sqrt(powf(floor_plane_normal_vector[0], 2) + powf(floor_plane_normal_vector[1], 2) + powf(floor_plane_normal_vector[2], 2)) * sqrt(powf(xy_plane_normal_vector[0], 2) + powf(xy_plane_normal_vector[1], 2) + powf(xy_plane_normal_vector[2], 2))));
+  float theta = acos((floor_plane_normal_vector[0] * xy_plane_normal_vector[0] + 
+                      floor_plane_normal_vector[1] * xy_plane_normal_vector[1] + 
+                      floor_plane_normal_vector[2] * xy_plane_normal_vector[2]) 
+                      / (sqrt(powf(floor_plane_normal_vector[0], 2) + 
+                              powf(floor_plane_normal_vector[1], 2) + 
+                              powf(floor_plane_normal_vector[2], 2)) 
+                        * sqrt(powf(xy_plane_normal_vector[0], 2) + 
+                               powf(xy_plane_normal_vector[1], 2) + 
+                               powf(xy_plane_normal_vector[2], 2))));
 
   // Calculate transform matrix
   Eigen::Affine3f transform_matrix = Eigen::Affine3f::Identity();
@@ -190,8 +196,12 @@ int getIndex(float x, float y, float z, pcl::PointCloud<pcl::PointXYZ>::Ptr clou
   {
     for (int j = 10; j < 630; j++)
     {
-      tmp_dist = sqrt(powf((cloud->points[i*640+j].x-x),2)+powf((cloud->points[i*640+j].y-y),2)+powf((cloud->points[i*640+j].z-z),2));
-      if (tmp_dist < dist) {
+      tmp_dist = sqrt(powf((cloud->points[i*640+j].x-x),2) + 
+                      powf((cloud->points[i*640+j].y-y),2) + 
+                      powf((cloud->points[i*640+j].z-z),2));
+
+      if (tmp_dist < dist) 
+      {
         index = i * 640 + j;
         dist = tmp_dist; 
         /*retx = cloud->points[i*640+j].x;
@@ -228,10 +238,10 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
   float z_after_rotation;
   static Eigen::Affine3f transform_matrix = Eigen::Affine3f::Identity();
 
-  if (first_time == 0){
+  if (first_time == 0)
+  {
     actual_time = ros::Time::now();
     first_time = 1;
-    //std::cout << "actualtime: " << actual_time << std::endl;
     transform_matrix = get_matrix(input_cloud, &z_after_rotation);
   }
 
@@ -255,7 +265,8 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
   //pass_window.setFilterLimitsNegative (true);
   pass_window.filter (*cloud);
 
-  if (ros::Time::now() - actual_time > (ros::Duration)(30)){
+  if (ros::Time::now() - actual_time > (ros::Duration)(30))
+  {
     actual_time = ros::Time::now();
     transform_matrix = get_matrix(cloud, &z_after_rotation);
     ROS_INFO_STREAM("Segmentation done.");
@@ -314,11 +325,9 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
   bool found_known_object = false;
   std_msgs::Bool found_objects;
 
-  for (int i = 0; i < clusters.size() && !manipulating; i++)
+  for (int i = 0; i < clusters.size() && !start_manipulating; i++)
   {
-
     ROS_INFO_STREAM("\n\n");
-    ROS_INFO_STREAM("Object(s) in front of the robot!");
 
     Eigen::Vector4f centroid;
 
@@ -330,19 +339,21 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
     int x_2d = point_cloud_index % 640;
     int y_2d = point_cloud_index / 640;
 
-    ROS_INFO_STREAM("Index from cluster: " << point_cloud_index);
-    ROS_INFO_STREAM("Object n. " << i << ": y in 2d is: " << y_2d);
-    ROS_INFO_STREAM("Object n. " << i << ": x in 2d is: " << x_2d); 
+    ROS_INFO_STREAM("Index of centroid in cloud: " << point_cloud_index);
+    ROS_INFO_STREAM("Object num. " << i << ": y coord: " << y_2d);
+    ROS_INFO_STREAM("Object num. " << i << ": x coord: " << x_2d); 
   
     nav_goal_x = centroid[1] * (-1) - 0.30;
     nav_goal_y = centroid[0] * (-1) - 0.25;
     nav_goal_orientation = centroid[0] * (-1);
 
-    // Try to recognize known objects
     std::vector<image_recognition_msgs::Recognition> recognitions;
     sensor_msgs::Image image_req = imageCb(image, x_2d, y_2d);
 
-    ROS_INFO_STREAM("Height: " << image_req.height << ", Width: " << image_req.width << ", Step: " << image_req.step << ", Data vector size: " << image_req.data.size());
+    ROS_INFO_STREAM("Image region info: Height: " << image_req.height << 
+                                      ", Width: " << image_req.width << 
+                                       ", Step: " << image_req.step << 
+                                      ", Data vector size: " << image_req.data.size());
 
     image_recognition_msgs::Recognize srv;
     image_recognition_msgs::CategoryProbability best;
@@ -351,53 +362,57 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
     best.label = "unknown";
     best.probability = UNKNOWN_PROB_TRESHHOLD;
 
-    if (client.call(srv)) {
-
+    // Try to recognize known objects
+    if (client.call(srv)) 
+    {
       recognitions = srv.response.recognitions;
 
-      for(std::vector<image_recognition_msgs::Recognition>::iterator i = recognitions.begin(); i != recognitions.end(); ++i) {
-
+      for(std::vector<image_recognition_msgs::Recognition>::iterator i = recognitions.begin(); i != recognitions.end(); ++i) 
+      {
 	best.label = "unknown";
 	//best.probability = i->categorical_distribution.unknown_probability;
         best.probability = UNKNOWN_PROB_TRESHHOLD;
 
-	for (unsigned int j = 0; j < i->categorical_distribution.probabilities.size(); j++) {
-
+	for (unsigned int j = 0; j < i->categorical_distribution.probabilities.size(); j++) 
+        {
 	  if (i->categorical_distribution.probabilities[j].probability > best.probability)
 	    best = i->categorical_distribution.probabilities[j];
 	}
       }
     }
 
-    if (best.label == "unknown") {
-
-      //found_objects.data = false;
-
+    if (best.label == "unknown") 
+    {
+      found_objects.data = false;
       ROS_INFO_STREAM("BEST TIP: !---unknown objects---!");
     }
-    else {
-    
+    else 
+    {
       found_objects.data = true;
       found_known_object = true;
-      manipulating = true;
-
-      break;
 
       ROS_INFO_STREAM("BEST TIP: !---" << best.label << "---!, with probability: " << best.probability);
+
+      break;
     }
 
+    objects_pub.publish(found_objects);
+  
   } // for()
 
   if (found_objects.data)
     objects_pub.publish(found_objects);
 
-  if (start_manipulating) {
-
+  if (start_manipulating) 
+  {
     MoveBaseClient ac("move_base", true);
 
-    while(!ac.waitForServer(ros::Duration(2.0))){
+    while(!ac.waitForServer(ros::Duration(2.0)))
+    {
       ROS_INFO("Waiting for the move_base action server to come up");
     }
+
+    ac.cancelAllGoals();
 
     move_base_msgs::MoveBaseGoal goal;
 
@@ -409,17 +424,17 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
     //goal.target_pose.pose.orientation.y = nav_goal_orientation;
     goal.target_pose.pose.orientation.w = 1.0;
 
-    ROS_INFO("Sending goal");
     ac.sendGoal(goal);
+
+    ROS_INFO("Sending goal");
 
     ac.waitForResult();
 
     if(ac.getState() == actionlib::SimpleClientGoalState::SUCCEEDED)
-      ROS_INFO("Hooray, the base moved 1 meter forward");
+      ROS_INFO("The robot moved to the object.");
     else
-      ROS_INFO("The base failed to move forward 1 meter for some reason");
+      ROS_INFO("A problem occured while moving to the object.");
 
-    manipulating = false;
     start_manipulating = false;
   }
 
@@ -437,7 +452,6 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
 
 int main (int argc, char** argv)
 {
-
   ros::init (argc, argv, "object_detector");
   ros::NodeHandle n;
   ros::ServiceClient client = n.serviceClient<image_recognition_msgs::Recognize>("recognize");
