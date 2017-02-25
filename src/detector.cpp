@@ -65,7 +65,6 @@ ros::Time actual_time;
 ros::Publisher image_pub;
 ros::Publisher objects_pub;
 bool start_manipulating = false;
-float nav_goal_x, nav_goal_y, nav_goal_orientation;
 
 sensor_msgs::Image imageCb(const sensor_msgs::ImageConstPtr& msg, int centroid_x, int centroid_y)
 {
@@ -324,6 +323,7 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
 
   bool found_known_object = false;
   std_msgs::Bool found_objects;
+  float nav_goal_x, nav_goal_y, nav_goal_orientation;
 
   for (int i = 0; i < clusters.size() && !start_manipulating; i++)
   {
