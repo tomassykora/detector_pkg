@@ -38,6 +38,7 @@
 #include <std_msgs/Bool.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <sensor_msgs/Image.h>
+#include <geometry_msgs/Twist.h>
 #include <message_filters/subscriber.h>
 #include <message_filters/synchronizer.h>
 #include <message_filters/sync_policies/approximate_time.h>
@@ -53,19 +54,20 @@
 #include <move_base_msgs/MoveBaseAction.h>
 #include <actionlib/client/simple_action_client.h>
 
-#define UNKNOWN_PROB_TRESHHOLD 0.95
+#define UNKNOWN_PROB_TRESHHOLD 0.94
 
 typedef actionlib::SimpleActionClient<move_base_msgs::MoveBaseAction> MoveBaseClient;
 
 using namespace message_filters;
 namespace enc = sensor_msgs::image_encodings;
 
-int rate_counter = 0;
-
 int first_time = 0;
 ros::Time actual_time;
+
 ros::Publisher image_pub;
 ros::Publisher objects_pub;
+ros::Publisher velocity_pub;
+
 bool start_manipulating = false;
 int file_num = -1;
 
@@ -112,10 +114,10 @@ sensor_msgs::Image imageCb(const sensor_msgs::ImageConstPtr& msg, int centroid_x
   img_roi_output.encoding = enc::BGR8;
   img_roi_output.image = cv_ptr->image(roi);
 
-  /*file_num = random();
+  file_num = random();
   std::ostringstream name;
   name << "file" << file_num << ".jpg";
-  imwrite(name.str(), img_roi_output.image);*/
+  imwrite(name.str(), img_roi_output.image);
 
   sensor_msgs::ImagePtr ros_msg_ptr = img_roi_output.toImageMsg(); 
 
@@ -195,27 +197,27 @@ int getIndex(float x, float y, float z, pcl::PointCloud<pcl::PointXYZ>::Ptr clou
 
   ROS_INFO_STREAM("Finding most similar coords to: " << x << " " << y << " " << z);
 
-  for (int i = 280; i < 480; i++)
+  for (int i = 0; i < 480; i++)
   {
     for (int j = 0; j < 640; j++)
     {
-      tmp_dist = sqrt(powf((cloud->points[i*640+j].x-x),2) + 
-                      powf((cloud->points[i*640+j].y-y),2) + 
-                      powf((cloud->points[i*640+j].z-z-0.05),2)); /* z -0.05 is a heuristic to get rid of floor points) */
+      if (!isnan(cloud->points[i*640+j].x) && !isnan(cloud->points[i*640+j].y) && !isnan(cloud->points[i*640+j].z))
+      {
+        tmp_dist = sqrt(powf((cloud->points[i*640+j].x-x),2) + 
+                        powf((cloud->points[i*640+j].y-y),2) + 
+                        powf((cloud->points[i*640+j].z-z-0.1),2)); /* z -0.1 is a heuristic to get rid of floor points) */
+      }
 
       if (tmp_dist < dist) 
       {
         index = i * 640 + j;
         dist = tmp_dist; 
-        /*retx = cloud->points[i*640+j].x;
-        rety = cloud->points[i*640+j].y;
-        retz = cloud->points[i*640+j].z;*/
       }
     }
   }
 
-  /*ROS_INFO_STREAM("Using coords: " << retx << " " << rety << " " << retz);
-  ROS_INFO_STREAM("Return index: " << index);*/
+  ROS_INFO_STREAM("Using point: " << cloud->points[index].x << ", " << cloud->points[index].y << ", " << cloud->points[index].z);
+
   return index;
 }
 
@@ -256,11 +258,11 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
   //pass.setFilterLimitsNegative (true);
   pass_window.filter (*cloud);
 
-  pass_window.setInputCloud (cloud);
+  /*pass_window.setInputCloud (cloud);
   pass_window.setFilterFieldName ("x");
   pass_window.setFilterLimits (-0.85, 0.85);
   //pass_window.setFilterLimitsNegative (true);
-  pass_window.filter (*cloud);
+  pass_window.filter (*cloud);*/
 
   pass_window.setInputCloud (cloud);
   pass_window.setFilterFieldName ("y");
@@ -328,9 +330,7 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
   std_msgs::Bool found_objects;
   float nav_goal_x, nav_goal_y, nav_goal_orientation;
 
-  rate_counter++;
-
-  for (int i = 0; i < clusters.size() && !start_manipulating && rate_counter%2; i++)
+  for (int i = 0; i < clusters.size() && !start_manipulating; i++)
   {
     ROS_INFO_STREAM("\n\n");
 
@@ -347,9 +347,13 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
     ROS_INFO_STREAM("Index of centroid in cloud: " << point_cloud_index);
     ROS_INFO_STREAM("Object num. " << i << ": y coord: " << y_2d);
     ROS_INFO_STREAM("Object num. " << i << ": x coord: " << x_2d); 
-  
-    nav_goal_x = centroid[1] * (-1) - 0.30;
-    nav_goal_y = centroid[0] * (-1) - 0.25;
+ 
+    /* don't understand why it's sometimes negative, another time positive */
+    if (centroid[1] < 0)
+      nav_goal_x = centroid[1] * (-1);
+    else 
+      nav_goal_x = centroid[1];
+    nav_goal_y = centroid[0] * (-1);
     nav_goal_orientation = centroid[0] * (-1);
 
     std::vector<image_recognition_msgs::Recognition> recognitions;
@@ -368,66 +372,77 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
     best.label = "unknown";
     best.probability = UNKNOWN_PROB_TRESHHOLD;
 
-    /* Stop exploration, because recognizing takes long time (seconds). */
+    /* Pause exploration, because recognizing takes a long time (seconds). */
     ac.cancelAllGoals();
     found_objects.data = true;
     objects_pub.publish(found_objects);
 
     // Try to recognize known objects
+    ROS_INFO_STREAM("Starting recognition.");
+
     if (client.call(srv)) 
     {
       recognitions = srv.response.recognitions;
 
       for(std::vector<image_recognition_msgs::Recognition>::iterator i = recognitions.begin(); i != recognitions.end(); ++i) 
       {
-	    best.label = "unknown";
-	    //best.probability = i->categorical_distribution.unknown_probability;
+        best.label = "unknown";
+	//best.probability = i->categorical_distribution.unknown_probability;
         best.probability = UNKNOWN_PROB_TRESHHOLD;
 
-	    for (unsigned int j = 0; j < i->categorical_distribution.probabilities.size(); j++) 
+	for (unsigned int j = 0; j < i->categorical_distribution.probabilities.size(); j++) 
         {
-	      if (i->categorical_distribution.probabilities[j].probability > best.probability)
-	        best = i->categorical_distribution.probabilities[j];
-	    }
+	  if (i->categorical_distribution.probabilities[j].probability > best.probability)
+	    best = i->categorical_distribution.probabilities[j];
+	}
       }
+      ROS_INFO_STREAM("Finished recognition.");
     }
-
+    else
+    {
+      ROS_INFO_STREAM("Recognition Error!");
+    }
+    
     if (best.label == "unknown") 
     {
       found_objects.data = false;
+      objects_pub.publish(found_objects);
+
       ROS_INFO_STREAM("BEST TIP: !---unknown objects---!");
     }
-    else 
+    else if (!found_known_object) 
     {
-      ac.cancelAllGoals();
-
-      found_objects.data = true;
-      objects_pub.publish(found_objects);
-      //found_known_object = true;
+      found_known_object = true;
 
       ROS_INFO_STREAM("BEST TIP: !---" << best.label << "---!, with probability: " << best.probability);
 
       break;
     }
-
-    objects_pub.publish(found_objects);
-  
   } // for()
 
   if (found_known_object)
   {
     start_manipulating = true;
 
-    /*MoveBaseClient ac("move_base", true);
+    ac.cancelAllGoals();
+    geometry_msgs::Twist base_cmd;
 
-    while(!ac.waitForServer(ros::Duration(2.0)))
+    int time = nav_goal_x/0.1;
+    ros::Rate loop_rate(4);
+
+    for (int i = 0; i < time*4; i++)
     {
-      ROS_INFO("Waiting for the move_base action server to come up");
+      ac.cancelAllGoals();
+      base_cmd.linear.x = 0.1;
+      base_cmd.angular.z = 0.15 * nav_goal_y;
+      velocity_pub.publish(base_cmd);
+      loop_rate.sleep();
     }
 
-    ac.cancelAllGoals();*/
+    base_cmd.linear.x = 0;
+    velocity_pub.publish(base_cmd);
 
-    move_base_msgs::MoveBaseGoal goal;
+    /*move_base_msgs::MoveBaseGoal goal;
 
     goal.target_pose.header.frame_id = "base_footprint";
     goal.target_pose.header.stamp = ros::Time::now();
@@ -437,46 +452,47 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
     //goal.target_pose.pose.orientation.y = nav_goal_orientation;
     goal.target_pose.pose.orientation.w = 1.0;
 
-    ac.sendGoal(goal);
+    actionlib::SimpleClientGoalState state = actionlib::SimpleClientGoalState::ABORTED;
+   
+    while(state != actionlib::SimpleClientGoalState::SUCCEEDED)
+    {
+      ac.cancelAllGoals();
+      ac.sendGoal(goal);
 
-    ROS_INFO("Sending goal");
+      ROS_INFO("Waiting for goal to accomplish...");
 
-    ac.waitForResult();
+      ac.waitForResult();
 
-    actionlib::SimpleClientGoalState state = ac.getState();
-    if (state == actionlib::SimpleClientGoalState::SUCCEEDED)
-      ROS_INFO_STREAM("The robot moved to the object.");
-    else if (state == actionlib::SimpleClientGoalState::PENDING)
-      ROS_INFO_STREAM("A problem occured while moving to the object, code: PENDING");
-    else if (state == actionlib::SimpleClientGoalState::ACTIVE)
-      ROS_INFO_STREAM("A problem occured while moving to the object, code: ACTIVE");
-    else if (state == actionlib::SimpleClientGoalState::PREEMPTED)
-      ROS_INFO_STREAM("A problem occured while moving to the object, code: PREEMPTED");
-    else if (state == actionlib::SimpleClientGoalState::ABORTED)
-      ROS_INFO_STREAM("A problem occured while moving to the object, code: ABORTED");
-    else if (state == actionlib::SimpleClientGoalState::REJECTED)
-      ROS_INFO_STREAM("A problem occured while moving to the object, code: REJECTED");
-  //  else if (state == actionlib::SimpleClientGoalState::PREEMPTING)
-    //  ROS_INFO_STREAM("A problem occured while moving to the object, code: PREEMPTING");
-   // else if (state == actionlib::SimpleClientGoalState::RECALLING)
-      //ROS_INFO_STREAM("A problem occured while moving to the object, code: RECALLING");
-    else if (state == actionlib::SimpleClientGoalState::RECALLED)
-      ROS_INFO_STREAM("A problem occured while moving to the object, code: RECALLED");
-    else if (state == actionlib::SimpleClientGoalState::LOST)
-      ROS_INFO_STREAM("A problem occured while moving to the object, code: LOST");
-    else
-      ROS_INFO_STREAM("An unknown problem occured while accomplishing the goal.");
+      state = ac.getState();
 
-    start_manipulating = found_known_object = false;
+      if (state == actionlib::SimpleClientGoalState::SUCCEEDED)
+        ROS_INFO_STREAM("The robot moved to the object.");
+      else if (state == actionlib::SimpleClientGoalState::PENDING)
+        ROS_INFO_STREAM("A problem occured while moving to the object, code: PENDING");
+      else if (state == actionlib::SimpleClientGoalState::ACTIVE)
+        ROS_INFO_STREAM("A problem occured while moving to the object, code: ACTIVE");
+      else if (state == actionlib::SimpleClientGoalState::PREEMPTED)
+        ROS_INFO_STREAM("A problem occured while moving to the object, code: PREEMPTED");
+      else if (state == actionlib::SimpleClientGoalState::ABORTED)
+        ROS_INFO_STREAM("A problem occured while moving to the object, code: ABORTED");
+      else if (state == actionlib::SimpleClientGoalState::REJECTED)
+        ROS_INFO_STREAM("A problem occured while moving to the object, code: REJECTED");
+      else if (state == actionlib::SimpleClientGoalState::RECALLED)
+        ROS_INFO_STREAM("A problem occured while moving to the object, code: RECALLED");
+      else if (state == actionlib::SimpleClientGoalState::LOST)
+        ROS_INFO_STREAM("A problem occured while moving to the object, code: LOST");
+      else
+        ROS_INFO_STREAM("An unknown problem occured while accomplishing the goal.");
+    }*/
   }
 
 
-  pcl::PointCloud <pcl::PointXYZRGB>::Ptr colored_cloud = reg.getColoredCloud ();
+  /*pcl::PointCloud <pcl::PointXYZRGB>::Ptr colored_cloud = reg.getColoredCloud ();
   pcl::visualization::CloudViewer viewer ("Cluster viewer");
   viewer.showCloud(colored_cloud);
   while (!viewer.wasStopped ())
   {
-  }
+  }*/
 }
 
 int main (int argc, char** argv)
@@ -494,6 +510,7 @@ int main (int argc, char** argv)
 
   image_pub = n.advertise<sensor_msgs::Image>("roi_image", 1000);
   objects_pub = n.advertise<std_msgs::Bool>("objects", 1000);
+  velocity_pub = n.advertise<geometry_msgs::Twist>("mobile_base/commands/velocity", 1000);
 
   //ros::Subscriber sub = n.subscribe<sensor_msgs::PointCloud2> ("/camera/depth/points", 1, boost::bind(object_detector, _1, boost::ref(client), boost::ref(n)));
   //ros::Subscriber sub = n.subscribe<sensor_msgs::Image> ("/camera/rgb/image_raw", 1, boost::bind(object_detector, _1, boost::ref(client), boost::ref(n)));
@@ -502,7 +519,7 @@ int main (int argc, char** argv)
 
   typedef sync_policies::ApproximateTime<sensor_msgs::PointCloud2, sensor_msgs::Image> MySyncPolicy;
   // ApproximateTime takes a queue size as its constructor argument, hence MySyncPolicy(10)
-  Synchronizer<MySyncPolicy> sync(MySyncPolicy(10), depth_sub, image_sub);
+  Synchronizer<MySyncPolicy> sync(MySyncPolicy(5), depth_sub, image_sub);
 
   sync.registerCallback(boost::bind(&object_detector, _1, _2, boost::ref(client), boost::ref(n), boost::ref(ac)));
 
