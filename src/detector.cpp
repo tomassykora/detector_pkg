@@ -35,14 +35,17 @@
 #include <pcl_conversions/pcl_conversions.h>
 
 #include "ros/ros.h"
+#include <tf/tf.h>
 #include <std_msgs/Bool.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <sensor_msgs/Image.h>
 #include <geometry_msgs/Twist.h>
+#include "geometry_msgs/PointStamped.h"
 #include <message_filters/subscriber.h>
 #include <message_filters/synchronizer.h>
 #include <message_filters/sync_policies/approximate_time.h>
 #include <image_recognition_msgs/Recognize.h>
+#include <image_geometry/pinhole_camera_model.h>
 
 #include <image_transport/image_transport.h>
 #include <cv_bridge/cv_bridge.h>
@@ -54,7 +57,7 @@
 #include <move_base_msgs/MoveBaseAction.h>
 #include <actionlib/client/simple_action_client.h>
 
-#define UNKNOWN_PROB_TRESHHOLD 0.94
+#define UNKNOWN_PROB_TRESHHOLD 0.96
 
 typedef actionlib::SimpleActionClient<move_base_msgs::MoveBaseAction> MoveBaseClient;
 
@@ -67,6 +70,8 @@ ros::Time actual_time;
 ros::Publisher image_pub;
 ros::Publisher objects_pub;
 ros::Publisher velocity_pub;
+
+image_geometry::PinholeCameraModel cam_model;
 
 bool start_manipulating = false;
 int file_num = -1;
@@ -87,27 +92,49 @@ sensor_msgs::Image imageCb(const sensor_msgs::ImageConstPtr& msg, int centroid_x
 
   int x_offset, y_offset;
 
-  if (centroid_x-60 > 0)
-    x_offset = centroid_x-60;
+  if (centroid_x-30 > 0)
+    x_offset = centroid_x-30;
   else
     x_offset = 0;
 
-  if (centroid_y-20 > 0)
-    y_offset = centroid_y-20;
+  if (centroid_y-5 > 0)
+    y_offset = centroid_y-5;
   else
     y_offset = 0;
 
   int rect_x, rect_y;
 
-  if (x_offset+100 > 639)
+  if (x_offset+60 > 639)
     rect_x = 639-x_offset;
   else
-    rect_x = 100;
+    rect_x = 60;
 
-  if (y_offset+185 > 479)
+  if (y_offset+110 > 479)
     rect_y = 479-y_offset;
   else
-    rect_y = 185;
+    rect_y = 110;
+
+  /*if (centroid_x-30 > 0)
+    x_offset = centroid_x-30;
+  else
+    x_offset = 0;
+
+  if (centroid_y-50 > 0)
+    y_offset = centroid_y-50;
+  else
+    y_offset = 0;
+
+  int rect_x, rect_y;
+
+  if (x_offset+85 > 639)
+    rect_x = 639-x_offset;
+  else
+    rect_x = 85;
+
+  if (y_offset+120 > 479)
+    rect_y = 479-y_offset;
+  else
+    rect_y = 120;*/
 
   cv::Rect roi(x_offset, y_offset, rect_x, rect_y);
   img_roi_output.header = msg->header;
@@ -191,9 +218,9 @@ Eigen::Affine3f get_matrix(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, float *z_a
 
 int getIndex(float x, float y, float z, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud)
 {
-  float dist = 100.0;
+  double dist = 100.0;
   int index = 0;
-  float retx, rety, retz, tmp_dist;
+  double tmp_dist;
 
   ROS_INFO_STREAM("Finding most similar coords to: " << x << " " << y << " " << z);
 
@@ -201,11 +228,12 @@ int getIndex(float x, float y, float z, pcl::PointCloud<pcl::PointXYZ>::Ptr clou
   {
     for (int j = 0; j < 640; j++)
     {
-      if (!isnan(cloud->points[i*640+j].x) && !isnan(cloud->points[i*640+j].y) && !isnan(cloud->points[i*640+j].z))
+      //if (!isnan(cloud->points[i*640+j].x) && !isnan(cloud->points[i*640+j].y) && !isnan(cloud->points[i*640+j].z))
+      if (isFinite(cloud->points[i*640+j]))
       {
         tmp_dist = sqrt(powf((cloud->points[i*640+j].x-x),2) + 
                         powf((cloud->points[i*640+j].y-y),2) + 
-                        powf((cloud->points[i*640+j].z-z-0.1),2)); /* z -0.1 is a heuristic to get rid of floor points) */
+                        powf((cloud->points[i*640+j].z-z-0.6),2)); /* z -0.1 is a heuristic to get rid of floor points) */
       }
 
       if (tmp_dist < dist) 
@@ -233,10 +261,12 @@ int computeCentroidIndex(const std::vector<int> &indices)
   return (int)centroid_index/indices.size();
 }
 
-void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor_msgs::ImageConstPtr& image, ros::ServiceClient &client, ros::NodeHandle &n, MoveBaseClient &ac)
+void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor_msgs::ImageConstPtr& image, const sensor_msgs::CameraInfoConstPtr& info_msg, ros::ServiceClient &client, ros::NodeHandle &n, MoveBaseClient &ac)
 //void object_detector(const sensor_msgs::ImageConstPtr& image, ros::ServiceClient &client, ros::NodeHandle &n)
 //void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, ros::ServiceClient &client, ros::NodeHandle &n)
 {
+  ROS_INFO_STREAM("Handle pointcloud...");
+
   pcl::PointCloud<pcl::PointXYZ>::Ptr input_cloud(new pcl::PointCloud<pcl::PointXYZ>);
   pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
   pcl::fromROSMsg (*input, *input_cloud);
@@ -245,6 +275,7 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
 
   if (first_time == 0)
   {
+    cam_model.fromCameraInfo(info_msg);
     actual_time = ros::Time::now();
     first_time = 1;
     transform_matrix = get_matrix(input_cloud, &z_after_rotation);
@@ -337,9 +368,24 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
     Eigen::Vector4f centroid;
 
     pcl::compute3DCentroid (*cloud_without_plane, clusters[i], centroid);
+ 
+    /*tf::Point tf_point; 
+    tf_point[0] = centroid[0]; tf_point[1] = centroid[1]; tf_point[2] = centroid[2];
+   
+    tf::Transformer transformer;
+     
+    tf::Stamped<tf::Point> tf_point_in(tf_point, image->header.stamp, "camera_depth_optical_frame"); 
+    tf::Stamped<tf::Point> tf_point_out(tf_point, image->header.stamp, "camera_rgb_optical_frame");
+ 
+    transformer.waitForTransform("camera_rgb_optical_frame", "camera_depth_optical_frame", ros::Time::now(), ros::Duration(0.0)); 
+    transformer.transformPoint("camera_rgb_optical_frame", boost::ref(tf_point_in), boost::ref(tf_point_out));
+*/
+    cv::Point3d p(centroid[0]-0.025, sqrt(powf(centroid[1],2)-0.000625), centroid[2]);
+    cv::Point2d pixel = cam_model.project3dToPixel(p);
 
     ROS_INFO_STREAM("Computed centroid: " << centroid[0] << " " << centroid[1] << " " << centroid[2] << " " << centroid[3]);
 
+    //int point_cloud_index = getIndex(centroid[0], centroid[1], centroid[2], input_cloud);
     int point_cloud_index = getIndex(centroid[0], centroid[1], centroid[2], input_cloud);
     int x_2d = point_cloud_index % 640;
     int y_2d = point_cloud_index / 640;
@@ -347,7 +393,7 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
     ROS_INFO_STREAM("Index of centroid in cloud: " << point_cloud_index);
     ROS_INFO_STREAM("Object num. " << i << ": y coord: " << y_2d);
     ROS_INFO_STREAM("Object num. " << i << ": x coord: " << x_2d); 
- 
+    //ROS_INFO_STREAM("Cv coords: " << pixel.x << ", " << pixel.y); 
     /* don't understand why it's sometimes negative, another time positive */
     if (centroid[1] < 0)
       nav_goal_x = centroid[1] * (-1);
@@ -358,6 +404,7 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
 
     std::vector<image_recognition_msgs::Recognition> recognitions;
     sensor_msgs::Image image_req = imageCb(image, x_2d, y_2d);
+    //sensor_msgs::Image image_req = imageCb(image, pixel.x, pixel.y);
 
     ROS_INFO_STREAM("Image region info: Height: " << image_req.height << 
                                       ", Width: " << image_req.width << 
@@ -434,7 +481,7 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
     {
       ac.cancelAllGoals();
       base_cmd.linear.x = 0.1;
-      base_cmd.angular.z = 0.15 * nav_goal_y;
+      base_cmd.angular.z = 0.1 * nav_goal_y;
       velocity_pub.publish(base_cmd);
       loop_rate.sleep();
     }
@@ -516,12 +563,13 @@ int main (int argc, char** argv)
   //ros::Subscriber sub = n.subscribe<sensor_msgs::Image> ("/camera/rgb/image_raw", 1, boost::bind(object_detector, _1, boost::ref(client), boost::ref(n)));
   message_filters::Subscriber<sensor_msgs::PointCloud2> depth_sub(n, "/camera/depth/points", 1);
   message_filters::Subscriber<sensor_msgs::Image> image_sub(n, "/camera/rgb/image_raw", 1);
+  message_filters::Subscriber<sensor_msgs::CameraInfo> camInfo_sub(n, "/camera/rgb/camera_info", 1);
 
-  typedef sync_policies::ApproximateTime<sensor_msgs::PointCloud2, sensor_msgs::Image> MySyncPolicy;
+  typedef sync_policies::ApproximateTime<sensor_msgs::PointCloud2, sensor_msgs::Image, sensor_msgs::CameraInfo> MySyncPolicy;
   // ApproximateTime takes a queue size as its constructor argument, hence MySyncPolicy(10)
-  Synchronizer<MySyncPolicy> sync(MySyncPolicy(5), depth_sub, image_sub);
+  Synchronizer<MySyncPolicy> sync(MySyncPolicy(5), depth_sub, image_sub, camInfo_sub);
 
-  sync.registerCallback(boost::bind(&object_detector, _1, _2, boost::ref(client), boost::ref(n), boost::ref(ac)));
+  sync.registerCallback(boost::bind(&object_detector, _1, _2, _3, boost::ref(client), boost::ref(n), boost::ref(ac)));
 
   ros::spin();
 

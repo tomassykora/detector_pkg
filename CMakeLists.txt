@@ -16,6 +16,8 @@ find_package(catkin REQUIRED COMPONENTS
   move_base_msgs
   moveit_commander
   moveit_msgs
+  tf
+  image_geometry
 )
 
 ## System dependencies are found with CMake's conventions
