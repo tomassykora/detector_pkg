@@ -67,14 +67,13 @@ namespace enc = sensor_msgs::image_encodings;
 int first_time = 0;
 ros::Time actual_time;
 
-ros::Publisher image_pub;
 ros::Publisher objects_pub;
 ros::Publisher velocity_pub;
 
-image_geometry::PinholeCameraModel cam_model;
-
 bool start_manipulating = false;
 int file_num = -1;
+
+float object_distance, object_x_dist;
 
 sensor_msgs::Image imageCb(const sensor_msgs::ImageConstPtr& msg, int centroid_x, int centroid_y)
 {
@@ -91,50 +90,52 @@ sensor_msgs::Image imageCb(const sensor_msgs::ImageConstPtr& msg, int centroid_x
   }
 
   int x_offset, y_offset;
-
-  if (centroid_x-30 > 0)
-    x_offset = centroid_x-30;
-  else
-    x_offset = 0;
-
-  if (centroid_y-5 > 0)
-    y_offset = centroid_y-5;
-  else
-    y_offset = 0;
-
   int rect_x, rect_y;
 
-  if (x_offset+60 > 639)
-    rect_x = 639-x_offset;
-  else
-    rect_x = 60;
+  if (object_distance > 1.5 )
+  {
+    if (centroid_x-(25+object_x_dist*15) > 0)
+      x_offset = centroid_x-(25+object_x_dist*15);
+    else
+      x_offset = 0;
 
-  if (y_offset+110 > 479)
-    rect_y = 479-y_offset;
-  else
-    rect_y = 110;
+    if (centroid_y-35 > 0)
+      y_offset = centroid_y-35;
+    else
+      y_offset = 0;
 
-  /*if (centroid_x-30 > 0)
-    x_offset = centroid_x-30;
-  else
-    x_offset = 0;
+    if (x_offset+35 > 639)
+      rect_x = 639-x_offset;
+    else
+      rect_x = 35;
 
-  if (centroid_y-50 > 0)
-    y_offset = centroid_y-50;
+    if (y_offset+80 > 479)
+      rect_y = 479-y_offset;
+    else
+      rect_y = 80;
+  }
   else
-    y_offset = 0;
+  {
+    if (centroid_x-(35+object_x_dist*20) > 0)
+      x_offset = centroid_x-(35+object_x_dist*20);
+    else
+      x_offset = 0;
 
-  int rect_x, rect_y;
+    if (centroid_y-55 > 0)
+      y_offset = centroid_y-55;
+    else
+      y_offset = 0;
 
-  if (x_offset+85 > 639)
-    rect_x = 639-x_offset;
-  else
-    rect_x = 85;
+    if (x_offset+55 > 639)
+      rect_x = 639-x_offset;
+    else
+      rect_x = 55;
 
-  if (y_offset+120 > 479)
-    rect_y = 479-y_offset;
-  else
-    rect_y = 120;*/
+    if (y_offset+110 > 479)
+      rect_y = 479-y_offset;
+    else
+      rect_y = 110;
+  }
 
   cv::Rect roi(x_offset, y_offset, rect_x, rect_y);
   img_roi_output.header = msg->header;
@@ -220,7 +221,7 @@ int getIndex(float x, float y, float z, pcl::PointCloud<pcl::PointXYZ>::Ptr clou
 {
   double dist = 100.0;
   int index = 0;
-  double tmp_dist;
+  double new_dist;
 
   ROS_INFO_STREAM("Finding most similar coords to: " << x << " " << y << " " << z);
 
@@ -229,17 +230,20 @@ int getIndex(float x, float y, float z, pcl::PointCloud<pcl::PointXYZ>::Ptr clou
     for (int j = 0; j < 640; j++)
     {
       //if (!isnan(cloud->points[i*640+j].x) && !isnan(cloud->points[i*640+j].y) && !isnan(cloud->points[i*640+j].z))
-      if (isFinite(cloud->points[i*640+j]))
+      if (pcl::isFinite(cloud->points[i*640+j]) )
       {
-        tmp_dist = sqrt(powf((cloud->points[i*640+j].x-x),2) + 
-                        powf((cloud->points[i*640+j].y-y),2) + 
-                        powf((cloud->points[i*640+j].z-z-0.6),2)); /* z -0.1 is a heuristic to get rid of floor points) */
+        new_dist = sqrt(powf((cloud->points[i*640+j].x-x),2) + 
+                        //powf((cloud->points[i*640+j].y-z),2) + 
+                        //powf((cloud->points[i*640+j].z+y),2));
+                        powf((cloud->points[i*640+j].y-y),2) +
+                        powf((cloud->points[i*640+j].z-z),2));
       }
 
-      if (tmp_dist < dist) 
+      if (new_dist < dist) 
       {
+        //ROS_INFO_STREAM("Setting new distance from: " << dist << " to " << new_dist);
         index = i * 640 + j;
-        dist = tmp_dist; 
+        dist = new_dist; 
       }
     }
   }
@@ -249,19 +253,7 @@ int getIndex(float x, float y, float z, pcl::PointCloud<pcl::PointXYZ>::Ptr clou
   return index;
 }
 
-int computeCentroidIndex(const std::vector<int> &indices)
-{
-  int centroid_index = 0;
-
-  for (size_t i = 0; i < indices.size (); ++i)
-  {
-    centroid_index += indices[i];
-  }
-
-  return (int)centroid_index/indices.size();
-}
-
-void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor_msgs::ImageConstPtr& image, const sensor_msgs::CameraInfoConstPtr& info_msg, ros::ServiceClient &client, ros::NodeHandle &n, MoveBaseClient &ac)
+void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor_msgs::ImageConstPtr& image, ros::ServiceClient &client, ros::NodeHandle &n, MoveBaseClient &ac)
 //void object_detector(const sensor_msgs::ImageConstPtr& image, ros::ServiceClient &client, ros::NodeHandle &n)
 //void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, ros::ServiceClient &client, ros::NodeHandle &n)
 {
@@ -275,17 +267,20 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
 
   if (first_time == 0)
   {
-    cam_model.fromCameraInfo(info_msg);
     actual_time = ros::Time::now();
     first_time = 1;
     transform_matrix = get_matrix(input_cloud, &z_after_rotation);
   }
-
+  /*pcl::visualization::CloudViewer viewer1 ("Cluster viewer1");
+  viewer1.showCloud(input_cloud);
+  while (!viewer1.wasStopped ())
+  {
+  }*/
   // Select region of interest from point cloud by filering some points
   pcl::PassThrough<pcl::PointXYZ> pass_window;
   pass_window.setInputCloud (input_cloud);
   pass_window.setFilterFieldName ("z");
-  pass_window.setFilterLimits (0.0, 2.0);
+  pass_window.setFilterLimits (-2.5, 2.5);
   //pass.setFilterLimitsNegative (true);
   pass_window.filter (*cloud);
 
@@ -297,12 +292,11 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
 
   pass_window.setInputCloud (cloud);
   pass_window.setFilterFieldName ("y");
-  pass_window.setFilterLimits (-0.1, 0.3);
+  pass_window.setFilterLimits (-0.55, 0.55);
   //pass_window.setFilterLimitsNegative (true);
   pass_window.filter (*cloud);
 
-  // Commenting this for the demo video
-  if (ros::Time::now() - actual_time > (ros::Duration)(30))
+  /*if (ros::Time::now() - actual_time > (ros::Duration)(30))
   {
     actual_time = ros::Time::now();
     transform_matrix = get_matrix(cloud, &z_after_rotation);
@@ -312,19 +306,30 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
   // Transform the point cloud (if sensor angle is 90 degrees, skip this)
   pcl::PointCloud<pcl::PointXYZ>::Ptr transformed_cloud (new pcl::PointCloud<pcl::PointXYZ> ());
   pcl::transformPointCloud (*cloud, *transformed_cloud, transform_matrix);
-
+  pcl::visualization::CloudViewer viewer2 ("Cluster viewer2");
+  viewer2.showCloud(transformed_cloud);
+  while (!viewer2.wasStopped ())
+  {
+  }*/
   // Plane removal
   pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_without_plane (new pcl::PointCloud<pcl::PointXYZ> ());
 
   // Create the filtering object
   pcl::PassThrough<pcl::PointXYZ> pass;
-  pass.setInputCloud (transformed_cloud);
-  pass.setFilterFieldName ("z");
-  pass.setFilterLimits (z_after_rotation-0.03, z_after_rotation+0.03);
+  //pass.setInputCloud (transformed_cloud);
+  pass.setInputCloud (cloud);
+  //pass.setFilterFieldName ("z");
+  pass.setFilterFieldName ("y");
+  //pass.setFilterLimits (z_after_rotation-0.03, z_after_rotation+0.02);
+  pass.setFilterLimits (0.35-0.035, 0.35+0.035);
   pass.setFilterLimitsNegative (true);
   pass.filter (*cloud_without_plane);
 
-
+/*pcl::visualization::CloudViewer viewer3 ("Cluster viewer3");
+  viewer3.showCloud(cloud_without_plane);
+  while (!viewer3.wasStopped ())
+  {
+  }*/
   // Find remaining objects
   pcl::search::Search<pcl::PointXYZ>::Ptr tree = boost::shared_ptr<pcl::search::Search<pcl::PointXYZ> > (new pcl::search::KdTree<pcl::PointXYZ>);
   pcl::PointCloud <pcl::Normal>::Ptr normals (new pcl::PointCloud <pcl::Normal>);
@@ -342,8 +347,8 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
   pass2.filter (*indices);*/
 
   pcl::RegionGrowing<pcl::PointXYZ, pcl::Normal> reg;
-  reg.setMinClusterSize (1800);
-  reg.setMaxClusterSize (10000);
+  reg.setMinClusterSize (1500);
+  reg.setMaxClusterSize (9000);
   reg.setSearchMethod (tree);
   reg.setNumberOfNeighbours (30);
   reg.setInputCloud (cloud_without_plane);
@@ -364,47 +369,32 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
   for (int i = 0; i < clusters.size() && !start_manipulating; i++)
   {
     ROS_INFO_STREAM("\n\n");
+    ROS_INFO_STREAM("Cluster has " << clusters[i].indices.size() << " points");
 
     Eigen::Vector4f centroid;
 
     pcl::compute3DCentroid (*cloud_without_plane, clusters[i], centroid);
  
-    /*tf::Point tf_point; 
-    tf_point[0] = centroid[0]; tf_point[1] = centroid[1]; tf_point[2] = centroid[2];
-   
-    tf::Transformer transformer;
-     
-    tf::Stamped<tf::Point> tf_point_in(tf_point, image->header.stamp, "camera_depth_optical_frame"); 
-    tf::Stamped<tf::Point> tf_point_out(tf_point, image->header.stamp, "camera_rgb_optical_frame");
- 
-    transformer.waitForTransform("camera_rgb_optical_frame", "camera_depth_optical_frame", ros::Time::now(), ros::Duration(0.0)); 
-    transformer.transformPoint("camera_rgb_optical_frame", boost::ref(tf_point_in), boost::ref(tf_point_out));
-*/
-    cv::Point3d p(centroid[0]-0.025, sqrt(powf(centroid[1],2)-0.000625), centroid[2]);
-    cv::Point2d pixel = cam_model.project3dToPixel(p);
-
     ROS_INFO_STREAM("Computed centroid: " << centroid[0] << " " << centroid[1] << " " << centroid[2] << " " << centroid[3]);
 
-    //int point_cloud_index = getIndex(centroid[0], centroid[1], centroid[2], input_cloud);
     int point_cloud_index = getIndex(centroid[0], centroid[1], centroid[2], input_cloud);
+
     int x_2d = point_cloud_index % 640;
     int y_2d = point_cloud_index / 640;
 
     ROS_INFO_STREAM("Index of centroid in cloud: " << point_cloud_index);
     ROS_INFO_STREAM("Object num. " << i << ": y coord: " << y_2d);
     ROS_INFO_STREAM("Object num. " << i << ": x coord: " << x_2d); 
-    //ROS_INFO_STREAM("Cv coords: " << pixel.x << ", " << pixel.y); 
-    /* don't understand why it's sometimes negative, another time positive */
-    if (centroid[1] < 0)
-      nav_goal_x = centroid[1] * (-1);
-    else 
-      nav_goal_x = centroid[1];
+
+    object_x_dist = centroid[0];
+    object_distance = centroid[2];
+
+    nav_goal_x = centroid[1];
     nav_goal_y = centroid[0] * (-1);
     nav_goal_orientation = centroid[0] * (-1);
 
     std::vector<image_recognition_msgs::Recognition> recognitions;
     sensor_msgs::Image image_req = imageCb(image, x_2d, y_2d);
-    //sensor_msgs::Image image_req = imageCb(image, pixel.x, pixel.y);
 
     ROS_INFO_STREAM("Image region info: Height: " << image_req.height << 
                                       ", Width: " << image_req.width << 
@@ -467,6 +457,13 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
     }
   } // for()
 
+  /*pcl::PointCloud <pcl::PointXYZRGB>::Ptr colored_cloud = reg.getColoredCloud ();
+  pcl::visualization::CloudViewer viewer ("Cluster viewer");
+  viewer.showCloud(colored_cloud);
+  while (!viewer.wasStopped ())
+  {
+  }*/
+
   if (found_known_object)
   {
     start_manipulating = true;
@@ -477,17 +474,25 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
     int time = nav_goal_x/0.1;
     ros::Rate loop_rate(4);
 
-    for (int i = 0; i < time*4; i++)
+    ROS_INFO_STREAM("Going to object.");
+
+    for (int i = 0; i < time*30; i++)
     {
-      ac.cancelAllGoals();
-      base_cmd.linear.x = 0.1;
-      base_cmd.angular.z = 0.1 * nav_goal_y;
-      velocity_pub.publish(base_cmd);
+      ROS_INFO_STREAM("For loop " << i << "th time");
       loop_rate.sleep();
+      base_cmd.linear.x = 0.1;
+      base_cmd.angular.z = 0.06 * nav_goal_y;
+      velocity_pub.publish(base_cmd);
     }
 
     base_cmd.linear.x = 0;
+    base_cmd.angular.z = 0;
     velocity_pub.publish(base_cmd);
+
+    while(1)
+    {
+      ;
+    }
 
     /*move_base_msgs::MoveBaseGoal goal;
 
@@ -532,14 +537,6 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
         ROS_INFO_STREAM("An unknown problem occured while accomplishing the goal.");
     }*/
   }
-
-
-  /*pcl::PointCloud <pcl::PointXYZRGB>::Ptr colored_cloud = reg.getColoredCloud ();
-  pcl::visualization::CloudViewer viewer ("Cluster viewer");
-  viewer.showCloud(colored_cloud);
-  while (!viewer.wasStopped ())
-  {
-  }*/
 }
 
 int main (int argc, char** argv)
@@ -555,7 +552,7 @@ int main (int argc, char** argv)
     ROS_INFO("Waiting for the move_base action server to come up");
   }
 
-  image_pub = n.advertise<sensor_msgs::Image>("roi_image", 1000);
+  //image_pub = n.advertise<sensor_msgs::Image>("roi_image", 1000);
   objects_pub = n.advertise<std_msgs::Bool>("objects", 1000);
   velocity_pub = n.advertise<geometry_msgs::Twist>("mobile_base/commands/velocity", 1000);
 
@@ -563,13 +560,12 @@ int main (int argc, char** argv)
   //ros::Subscriber sub = n.subscribe<sensor_msgs::Image> ("/camera/rgb/image_raw", 1, boost::bind(object_detector, _1, boost::ref(client), boost::ref(n)));
   message_filters::Subscriber<sensor_msgs::PointCloud2> depth_sub(n, "/camera/depth/points", 1);
   message_filters::Subscriber<sensor_msgs::Image> image_sub(n, "/camera/rgb/image_raw", 1);
-  message_filters::Subscriber<sensor_msgs::CameraInfo> camInfo_sub(n, "/camera/rgb/camera_info", 1);
 
-  typedef sync_policies::ApproximateTime<sensor_msgs::PointCloud2, sensor_msgs::Image, sensor_msgs::CameraInfo> MySyncPolicy;
+  typedef sync_policies::ApproximateTime<sensor_msgs::PointCloud2, sensor_msgs::Image> MySyncPolicy;
   // ApproximateTime takes a queue size as its constructor argument, hence MySyncPolicy(10)
-  Synchronizer<MySyncPolicy> sync(MySyncPolicy(5), depth_sub, image_sub, camInfo_sub);
+  Synchronizer<MySyncPolicy> sync(MySyncPolicy(5), depth_sub, image_sub);
 
-  sync.registerCallback(boost::bind(&object_detector, _1, _2, _3, boost::ref(client), boost::ref(n), boost::ref(ac)));
+  sync.registerCallback(boost::bind(&object_detector, _1, _2, boost::ref(client), boost::ref(n), boost::ref(ac)));
 
   ros::spin();
 
