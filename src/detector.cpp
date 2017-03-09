@@ -57,7 +57,7 @@
 #include <move_base_msgs/MoveBaseAction.h>
 #include <actionlib/client/simple_action_client.h>
 
-#define UNKNOWN_PROB_TRESHHOLD 0.96
+#define UNKNOWN_PROB_TRESHHOLD 0.985
 
 typedef actionlib::SimpleActionClient<move_base_msgs::MoveBaseAction> MoveBaseClient;
 
@@ -220,7 +220,7 @@ Eigen::Affine3f get_matrix(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, float *z_a
 int getIndex(float x, float y, float z, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud)
 {
   double dist = 100.0;
-  int index = 0;
+  int index = -1;
   double new_dist;
 
   ROS_INFO_STREAM("Finding most similar coords to: " << x << " " << y << " " << z);
@@ -229,26 +229,27 @@ int getIndex(float x, float y, float z, pcl::PointCloud<pcl::PointXYZ>::Ptr clou
   {
     for (int j = 0; j < 640; j++)
     {
-      //if (!isnan(cloud->points[i*640+j].x) && !isnan(cloud->points[i*640+j].y) && !isnan(cloud->points[i*640+j].z))
-      if (pcl::isFinite(cloud->points[i*640+j]) )
+      if (!isnan(cloud->points[i*640+j].x) && !isnan(cloud->points[i*640+j].y) && !isnan(cloud->points[i*640+j].z) && pcl::isFinite(cloud->points[i*640+j]))
+      //if (pcl::isFinite(cloud->points[i*640+j]) )
       {
         new_dist = sqrt(powf((cloud->points[i*640+j].x-x),2) + 
                         //powf((cloud->points[i*640+j].y-z),2) + 
                         //powf((cloud->points[i*640+j].z+y),2));
                         powf((cloud->points[i*640+j].y-y),2) +
                         powf((cloud->points[i*640+j].z-z),2));
-      }
 
-      if (new_dist < dist) 
-      {
-        //ROS_INFO_STREAM("Setting new distance from: " << dist << " to " << new_dist);
-        index = i * 640 + j;
-        dist = new_dist; 
+        if (new_dist < dist)
+        {
+          //ROS_INFO_STREAM("Setting new distance from: " << dist << " to " << new_dist);
+          index = i * 640 + j;
+          dist = new_dist;
+        }
       }
     }
   }
 
-  ROS_INFO_STREAM("Using point: " << cloud->points[index].x << ", " << cloud->points[index].y << ", " << cloud->points[index].z);
+  if (index != -1)
+    ROS_INFO_STREAM("Using point: " << cloud->points[index].x << ", " << cloud->points[index].y << ", " << cloud->points[index].z);
 
   return index;
 }
@@ -347,7 +348,7 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
   pass2.filter (*indices);*/
 
   pcl::RegionGrowing<pcl::PointXYZ, pcl::Normal> reg;
-  reg.setMinClusterSize (1500);
+  reg.setMinClusterSize (1000);
   reg.setMaxClusterSize (9000);
   reg.setSearchMethod (tree);
   reg.setNumberOfNeighbours (30);
@@ -378,7 +379,7 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
     ROS_INFO_STREAM("Computed centroid: " << centroid[0] << " " << centroid[1] << " " << centroid[2] << " " << centroid[3]);
 
     int point_cloud_index = getIndex(centroid[0], centroid[1], centroid[2], input_cloud);
-
+if (point_cloud_index != -1) {
     int x_2d = point_cloud_index % 640;
     int y_2d = point_cloud_index / 640;
 
@@ -389,7 +390,7 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
     object_x_dist = centroid[0];
     object_distance = centroid[2];
 
-    nav_goal_x = centroid[1];
+    nav_goal_x = centroid[2] - 0.2;
     nav_goal_y = centroid[0] * (-1);
     nav_goal_orientation = centroid[0] * (-1);
 
@@ -455,6 +456,8 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
 
       break;
     }
+} else 
+ROS_INFO_STREAM("Did not find index (ret -1)");
   } // for()
 
   /*pcl::PointCloud <pcl::PointXYZRGB>::Ptr colored_cloud = reg.getColoredCloud ();
@@ -476,12 +479,14 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
 
     ROS_INFO_STREAM("Going to object.");
 
-    for (int i = 0; i < time*30; i++)
+    for (int i = 0; i < time*5; i++)
     {
-      ROS_INFO_STREAM("For loop " << i << "th time");
+      //ROS_INFO_STREAM("For loop " << i << "th time");
       loop_rate.sleep();
       base_cmd.linear.x = 0.1;
-      base_cmd.angular.z = 0.06 * nav_goal_y;
+      //base_cmd.angular.z = 0.08 * nav_goal_y;
+      //base_cmd.angular.z = (time*5) * 0.0006 * nav_goal_y;
+      base_cmd.angular.z = nav_goal_y / ((time*5) * 0.225);
       velocity_pub.publish(base_cmd);
     }
 
@@ -489,10 +494,7 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
     base_cmd.angular.z = 0;
     velocity_pub.publish(base_cmd);
 
-    while(1)
-    {
-      ;
-    }
+    ROS_INFO_STREAM("Goal accomplished!");
 
     /*move_base_msgs::MoveBaseGoal goal;
 
