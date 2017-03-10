@@ -13,6 +13,7 @@
 #include <cmath>
 #include <sstream>
 #include <vector>
+#include <string>
 #include <time.h>
 
 #include <pcl/ModelCoefficients.h>
@@ -37,6 +38,7 @@
 #include "ros/ros.h"
 #include <tf/tf.h>
 #include <std_msgs/Bool.h>
+#include <std_msgs/String.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <sensor_msgs/Image.h>
 #include <geometry_msgs/Twist.h>
@@ -69,11 +71,14 @@ ros::Time actual_time;
 
 ros::Publisher objects_pub;
 ros::Publisher velocity_pub;
+ros::Publisher objects_id_pub;
 
 bool start_manipulating = false;
 int file_num = -1;
 
 float object_distance, object_x_dist;
+
+bool sync_pointcloud = true;
 
 sensor_msgs::Image imageCb(const sensor_msgs::ImageConstPtr& msg, int centroid_x, int centroid_y)
 {
@@ -263,7 +268,8 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
     ac.cancelAllGoals();
     found_objects.data = true;
     objects_pub.publish(found_objects);
-
+    sync_pointcloud = !sync_pointcloud;
+if (sync_pointcloud) {
   ROS_INFO_STREAM("Handle pointcloud...");
 
   pcl::PointCloud<pcl::PointXYZ>::Ptr input_cloud(new pcl::PointCloud<pcl::PointXYZ>);
@@ -373,6 +379,7 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
   //std_msgs::Bool found_objects;
   float nav_goal_x, nav_goal_y, nav_goal_orientation;
   int point_cloud_index;
+  std::string obj_id;
 
   for (int i = 0; i < clusters.size() && !start_manipulating; i++)
   {
@@ -460,6 +467,7 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
       else if (!found_known_object) 
       {
         found_known_object = true;
+        obj_id = best.label;
 
         ROS_INFO_STREAM("BEST TIP: !---" << best.label << "---!, with probability: " << best.probability);
 
@@ -495,7 +503,7 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
       base_cmd.linear.x = 0.1;
       //base_cmd.angular.z = 0.08 * nav_goal_y;
       //base_cmd.angular.z = (time*5) * 0.0006 * nav_goal_y;
-      base_cmd.angular.z = nav_goal_y / ((time*5) * 0.225);
+      base_cmd.angular.z = nav_goal_y / ((time*5) * 0.24);
       velocity_pub.publish(base_cmd);
     }
 
@@ -505,6 +513,14 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
 
     ROS_INFO_STREAM("Goal accomplished!");
 
+    std_msgs::String object_id;
+    object_id.data = obj_id;
+    objects_id_pub.publish(object_id);
+ 
+    sleep(6);
+    start_manipulating = false;
+    found_known_object = false;
+ 
     /*move_base_msgs::MoveBaseGoal goal;
 
     goal.target_pose.header.frame_id = "base_footprint";
@@ -554,6 +570,7 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
     objects_pub.publish(found_objects);
     sleep(3.5);
   }
+} //if (sync_pointcloud)
 }
 
 int main (int argc, char** argv)
@@ -569,9 +586,9 @@ int main (int argc, char** argv)
     ROS_INFO("Waiting for the move_base action server to come up");
   }
 
-  //image_pub = n.advertise<sensor_msgs::Image>("roi_image", 1000);
   objects_pub = n.advertise<std_msgs::Bool>("objects", 1000);
   velocity_pub = n.advertise<geometry_msgs::Twist>("mobile_base/commands/velocity", 1000);
+  objects_id_pub = n.advertise<std_msgs::String>("object_id", 1000);
 
   //ros::Subscriber sub = n.subscribe<sensor_msgs::PointCloud2> ("/camera/depth/points", 1, boost::bind(object_detector, _1, boost::ref(client), boost::ref(n)));
   //ros::Subscriber sub = n.subscribe<sensor_msgs::Image> ("/camera/rgb/image_raw", 1, boost::bind(object_detector, _1, boost::ref(client), boost::ref(n)));
