@@ -1,0 +1,18 @@
+<launch>
+
+  <param name="/camera/driver/data_skip" value="20" />
+
+  <include file="$(find openni2_launch)/launch/openni2.launch"/>
+
+  <node name="depthimage_to_laserscan" pkg="depthimage_to_laserscan" type="depthimage_to_laserscan" > 
+    <arg name="output_frame_id" value="camera_link"/>
+    <remap from="image" to="/camera/depth/image_raw"/>
+    <rosparam>
+      range_min: 0.01
+      range_max: 5.5
+    </rosparam>
+  </node>
+
+  <node pkg="tf" type="static_transform_publisher" name="sensor_angle_broadcaster" args="0.12 0 0.305 0 0.0 0 1 base_footprint camera_link 1000" /> 
+
+</launch>
