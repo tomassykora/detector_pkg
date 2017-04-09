@@ -175,7 +175,7 @@ Eigen::Affine3f get_matrix(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, float *z_a
 
   if (inliers->indices.size () == 0)
   {
-    PCL_ERROR ("Could not estimate a planar model for the given dataset.\n");
+    //PCL_ERROR ("Could not estimate a planar model for the given dataset.\n");
     return Eigen::Affine3f::Identity();
   }
 
@@ -228,7 +228,7 @@ int getIndex(float x, float y, float z, pcl::PointCloud<pcl::PointXYZ>::Ptr clou
   int index = -1;
   double new_dist;
 
-  ROS_INFO_STREAM("Finding most similar coords to: " << x << " " << y << " " << z);
+  //ROS_INFO_STREAM("Finding most similar coords to: " << x << " " << y << " " << z);
 
   for (int i = 0; i < 480; i++)
   {
@@ -254,7 +254,7 @@ int getIndex(float x, float y, float z, pcl::PointCloud<pcl::PointXYZ>::Ptr clou
   }
 
   if (index != -1)
-    ROS_INFO_STREAM("Using point: " << cloud->points[index].x << ", " << cloud->points[index].y << ", " << cloud->points[index].z);
+    //ROS_INFO_STREAM("Using point: " << cloud->points[index].x << ", " << cloud->points[index].y << ", " << cloud->points[index].z);
 
   return index;
 }
@@ -270,7 +270,8 @@ void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor
     objects_pub.publish(found_objects);
     sync_pointcloud = !sync_pointcloud;
 if (sync_pointcloud) {
-  ROS_INFO_STREAM("Handle pointcloud...");
+  //ROS_INFO_STREAM("Handle pointcloud...");
+ROS_INFO_STREAM("Detecting and recognizing objects...");
 
   pcl::PointCloud<pcl::PointXYZ>::Ptr input_cloud(new pcl::PointCloud<pcl::PointXYZ>);
   pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
@@ -373,7 +374,7 @@ if (sync_pointcloud) {
   std::vector <pcl::PointIndices> clusters;
   reg.extract (clusters); 
   
-  ROS_INFO_STREAM("Found " << clusters.size() << " objects."); 
+  //ROS_INFO_STREAM("Found " << clusters.size() << " objects."); 
 
   bool found_known_object = false;
   //std_msgs::Bool found_objects;
@@ -383,14 +384,14 @@ if (sync_pointcloud) {
 
   for (int i = 0; i < clusters.size() && !start_manipulating; i++)
   {
-    ROS_INFO_STREAM("\n\n");
-    ROS_INFO_STREAM("Cluster has " << clusters[i].indices.size() << " points");
+    //ROS_INFO_STREAM("\n\n");
+    //ROS_INFO_STREAM("Cluster has " << clusters[i].indices.size() << " points");
 
     Eigen::Vector4f centroid;
 
     pcl::compute3DCentroid (*cloud_without_plane, clusters[i], centroid);
  
-    ROS_INFO_STREAM("Computed centroid: " << centroid[0] << " " << centroid[1] << " " << centroid[2] << " " << centroid[3]);
+    //ROS_INFO_STREAM("Computed centroid: " << centroid[0] << " " << centroid[1] << " " << centroid[2] << " " << centroid[3]);
 
     point_cloud_index = getIndex(centroid[0], centroid[1], centroid[2], input_cloud);
 
@@ -399,9 +400,9 @@ if (sync_pointcloud) {
       int x_2d = point_cloud_index % 640;
       int y_2d = point_cloud_index / 640;
 
-      ROS_INFO_STREAM("Index of centroid in cloud: " << point_cloud_index);
-      ROS_INFO_STREAM("Object num. " << i << ": y coord: " << y_2d);
-      ROS_INFO_STREAM("Object num. " << i << ": x coord: " << x_2d); 
+      //ROS_INFO_STREAM("Index of centroid in cloud: " << point_cloud_index);
+      //ROS_INFO_STREAM("Object num. " << i << ": y coord: " << y_2d);
+      //ROS_INFO_STREAM("Object num. " << i << ": x coord: " << x_2d); 
 
       object_x_dist = centroid[0];
       object_distance = centroid[2];
@@ -413,11 +414,11 @@ if (sync_pointcloud) {
       std::vector<image_recognition_msgs::Recognition> recognitions;
       sensor_msgs::Image image_req = imageCb(image, x_2d, y_2d);
 
-      ROS_INFO_STREAM("Image region info: Height: " << image_req.height << 
+      /*ROS_INFO_STREAM("Image region info: Height: " << image_req.height << 
                                         ", Width: " << image_req.width << 
                                         ", Step: " << image_req.step << 
                                         ", Data vector size: " << image_req.data.size() <<
-                                        ", file: " << file_num);
+                                        ", file: " << file_num);*/
 
       image_recognition_msgs::Recognize srv;
       image_recognition_msgs::CategoryProbability best;
@@ -432,7 +433,7 @@ if (sync_pointcloud) {
       objects_pub.publish(found_objects);*/
 
       // Try to recognize known objects
-      ROS_INFO_STREAM("Starting recognition.");
+      //ROS_INFO_STREAM("Starting recognition.");
 
       if (client.call(srv)) 
       {
@@ -450,11 +451,11 @@ if (sync_pointcloud) {
               best = i->categorical_distribution.probabilities[j];
           }
         }
-        ROS_INFO_STREAM("Finished recognition.");
+        //ROS_INFO_STREAM("Finished recognition.");
       }
       else
       {
-        ROS_INFO_STREAM("Recognition Error!");
+        //ROS_INFO_STREAM("Recognition Error!");
       }
       
       if (best.label == "unknown") 
@@ -462,7 +463,7 @@ if (sync_pointcloud) {
         //found_objects.data = false;
         //objects_pub.publish(found_objects);
 
-        ROS_INFO_STREAM("BEST TIP: !---unknown objects---!");
+        //ROS_INFO_STREAM("BEST TIP: !---unknown objects---!");
       }
       else if (!found_known_object) 
       {
@@ -494,7 +495,7 @@ if (sync_pointcloud) {
     int time = nav_goal_x/0.1;
     ros::Rate loop_rate(4);
 
-    ROS_INFO_STREAM("Going to object.");
+    ROS_INFO_STREAM("Going to object...");
 
     for (int i = 0; i < time*5; i++)
     {
@@ -511,15 +512,15 @@ if (sync_pointcloud) {
     base_cmd.angular.z = 0;
     velocity_pub.publish(base_cmd);
 
-    ROS_INFO_STREAM("Goal accomplished!");
+    ROS_INFO_STREAM("Goal accomplished, sending message!");
 
     std_msgs::String object_id;
     object_id.data = obj_id;
     objects_id_pub.publish(object_id);
  
-    sleep(6);
-    start_manipulating = false;
-    found_known_object = false;
+    sleep(10);
+    //start_manipulating = false;
+    //found_known_object = false;
  
     /*move_base_msgs::MoveBaseGoal goal;
 
@@ -566,9 +567,10 @@ if (sync_pointcloud) {
   } 
   else /* Continue with exploring */
   {
+    ROS_INFO_STREAM("No known objects, moving.");
     found_objects.data = false;
     objects_pub.publish(found_objects);
-    sleep(3.5);
+    sleep(4);
   }
 } //if (sync_pointcloud)
 }
