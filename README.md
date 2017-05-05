@@ -22,4 +22,4 @@ Run detector node:
 ROS package implementing actionlib client to frontier_exploration server. Needed frontier_exploration launch file is available in the [launch](https://github.com/tomassykora/detector_pkg/tree/master/launch) directory.
 
 ## Launch files
-All neccessary launch files to run navigation stack and whole object finder demo are available in the [launch](https://github.com/tomassykora/detector_pkg/tree/master/launch) directory.
+All necessary launch files to run navigation stack and whole object finder demo are available in the [launch](https://github.com/tomassykora/detector_pkg/tree/master/launch) directory.
