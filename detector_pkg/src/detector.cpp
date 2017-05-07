@@ -80,6 +80,9 @@ float object_distance, object_x_dist;
 
 bool sync_pointcloud = true;
 
+/*
+ * Selects a region of interest from the image. Its size is not adjustible so far, which should be changed. 
+ */
 sensor_msgs::Image imageCb(const sensor_msgs::ImageConstPtr& msg, int centroid_x, int centroid_y)
 {
   cv_bridge::CvImageConstPtr cv_ptr;
@@ -157,7 +160,9 @@ sensor_msgs::Image imageCb(const sensor_msgs::ImageConstPtr& msg, int centroid_x
   return *ros_msg_ptr;
 }
 
-
+/*
+ * Computes a transformation matrix.
+ */
 Eigen::Affine3f get_matrix(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, float *z_after_rotation)
 {
   pcl::ModelCoefficients::Ptr coefficients (new pcl::ModelCoefficients);
@@ -175,7 +180,7 @@ Eigen::Affine3f get_matrix(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, float *z_a
 
   if (inliers->indices.size () == 0)
   {
-    //PCL_ERROR ("Could not estimate a planar model for the given dataset.\n");
+    PCL_ERROR ("Could not estimate a planar model for the given dataset.\n");
     return Eigen::Affine3f::Identity();
   }
 
@@ -222,6 +227,9 @@ Eigen::Affine3f get_matrix(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, float *z_a
   return transform_matrix;
 }
 
+/*
+ * Finds the index of the point with given distances in the point cloud points vector.
+ */
 int getIndex(float x, float y, float z, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud)
 {
   double dist = 100.0;
@@ -235,7 +243,6 @@ int getIndex(float x, float y, float z, pcl::PointCloud<pcl::PointXYZ>::Ptr clou
     for (int j = 0; j < 640; j++)
     {
       if (!isnan(cloud->points[i*640+j].x) && !isnan(cloud->points[i*640+j].y) && !isnan(cloud->points[i*640+j].z) && pcl::isFinite(cloud->points[i*640+j]))
-      //if (pcl::isFinite(cloud->points[i*640+j]) )
       {
         new_dist = sqrt(powf((cloud->points[i*640+j].x-x),2) + 
                         //powf((cloud->points[i*640+j].y-z),2) + 
@@ -253,326 +260,270 @@ int getIndex(float x, float y, float z, pcl::PointCloud<pcl::PointXYZ>::Ptr clou
     }
   }
 
-  if (index != -1)
-    //ROS_INFO_STREAM("Using point: " << cloud->points[index].x << ", " << cloud->points[index].y << ", " << cloud->points[index].z);
-
   return index;
 }
 
+/*
+ * The main detector function performing the whole algorithm.
+ */
 void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, const sensor_msgs::ImageConstPtr& image, ros::ServiceClient &client, ros::NodeHandle &n, MoveBaseClient &ac)
 //void object_detector(const sensor_msgs::ImageConstPtr& image, ros::ServiceClient &client, ros::NodeHandle &n)
 //void object_detector(const sensor_msgs::PointCloud2ConstPtr& input, ros::ServiceClient &client, ros::NodeHandle &n)
 {
-/* Pause exploration, because recognizing takes a long time (seconds). */
+
+	/* Pause exploration, because recognizing takes a long time (seconds). */
     std_msgs::Bool found_objects;
     ac.cancelAllGoals();
     found_objects.data = true;
     objects_pub.publish(found_objects);
     sync_pointcloud = !sync_pointcloud;
-if (sync_pointcloud) {
-  //ROS_INFO_STREAM("Handle pointcloud...");
-ROS_INFO_STREAM("Detecting and recognizing objects...");
 
-  pcl::PointCloud<pcl::PointXYZ>::Ptr input_cloud(new pcl::PointCloud<pcl::PointXYZ>);
-  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
-  pcl::fromROSMsg (*input, *input_cloud);
-  float z_after_rotation;
-  /*static Eigen::Affine3f transform_matrix = Eigen::Affine3f::Identity();
+	if (sync_pointcloud) {
+	  //ROS_INFO_STREAM("Handle pointcloud...");
 
-  if (first_time == 0)
-  {
-    actual_time = ros::Time::now();
-    first_time = 1;
-    transform_matrix = get_matrix(input_cloud, &z_after_rotation);
-  }*/
-  /*pcl::visualization::CloudViewer viewer1 ("Cluster viewer1");
-  viewer1.showCloud(input_cloud);
-  while (!viewer1.wasStopped ())
-  {
-  }*/
-  // Select region of interest from point cloud by filering some points
-  pcl::PassThrough<pcl::PointXYZ> pass_window;
-  pass_window.setInputCloud (input_cloud);
-  pass_window.setFilterFieldName ("z");
-  pass_window.setFilterLimits (-2.5, 2.5);
-  //pass.setFilterLimitsNegative (true);
-  pass_window.filter (*cloud);
+		ROS_INFO_STREAM("Detecting and recognizing objects...");
 
-  /*pass_window.setInputCloud (cloud);
-  pass_window.setFilterFieldName ("x");
-  pass_window.setFilterLimits (-0.85, 0.85);
-  //pass_window.setFilterLimitsNegative (true);
-  pass_window.filter (*cloud);*/
+	  pcl::PointCloud<pcl::PointXYZ>::Ptr input_cloud(new pcl::PointCloud<pcl::PointXYZ>);
+	  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+	  pcl::fromROSMsg (*input, *input_cloud);
+	  float z_after_rotation;
+	  /*static Eigen::Affine3f transform_matrix = Eigen::Affine3f::Identity();*/
 
-  pass_window.setInputCloud (cloud);
-  pass_window.setFilterFieldName ("y");
-  pass_window.setFilterLimits (-0.55, 0.55);
-  //pass_window.setFilterLimitsNegative (true);
-  pass_window.filter (*cloud);
+/* BECAUSE OF A PROBLEM WITH THE ROBOT TRANSFORMATIONS, FLOOR SEGMENTATION IS SWITCHED OFF,
+   SO THE ROBOT SENSOR ANGLE HAS TO BE 90 DEGREES. */
 
-  /*if (ros::Time::now() - actual_time > (ros::Duration)(30))
-  {
-    actual_time = ros::Time::now();
-    transform_matrix = get_matrix(cloud, &z_after_rotation);
-    ROS_INFO_STREAM("Segmentation done.");
-  }
- 
-  // Transform the point cloud (if sensor angle is 90 degrees, skip this)
-  pcl::PointCloud<pcl::PointXYZ>::Ptr transformed_cloud (new pcl::PointCloud<pcl::PointXYZ> ());
-  pcl::transformPointCloud (*cloud, *transformed_cloud, transform_matrix);
-  pcl::visualization::CloudViewer viewer2 ("Cluster viewer2");
-  viewer2.showCloud(transformed_cloud);
-  while (!viewer2.wasStopped ())
-  {
-  }*/
-  // Plane removal
-  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_without_plane (new pcl::PointCloud<pcl::PointXYZ> ());
+	  /*if (first_time == 0)
+	  {
+	    actual_time = ros::Time::now();
+	    first_time = 1;
+	    transform_matrix = get_matrix(input_cloud, &z_after_rotation);
+	  }*/
 
-  // Create the filtering object
-  pcl::PassThrough<pcl::PointXYZ> pass;
-  //pass.setInputCloud (transformed_cloud);
-  pass.setInputCloud (cloud);
-  //pass.setFilterFieldName ("z");
-  pass.setFilterFieldName ("y");
-  //pass.setFilterLimits (z_after_rotation-0.03, z_after_rotation+0.02);
-  pass.setFilterLimits (0.35-0.035, 0.35+0.035);
-  pass.setFilterLimitsNegative (true);
-  pass.filter (*cloud_without_plane);
+	  // Select region of interest from point cloud by filering some points (with big distance or height)
+	  pcl::PassThrough<pcl::PointXYZ> pass_window;
+	  pass_window.setInputCloud (input_cloud);
+	  pass_window.setFilterFieldName ("z");
+	  pass_window.setFilterLimits (-2.5, 2.5);
+	  //pass.setFilterLimitsNegative (true);
+	  pass_window.filter (*cloud);
 
-/*pcl::visualization::CloudViewer viewer3 ("Cluster viewer3");
-  viewer3.showCloud(cloud_without_plane);
-  while (!viewer3.wasStopped ())
-  {
-  }*/
-  // Find remaining objects
-  pcl::search::Search<pcl::PointXYZ>::Ptr tree = boost::shared_ptr<pcl::search::Search<pcl::PointXYZ> > (new pcl::search::KdTree<pcl::PointXYZ>);
-  pcl::PointCloud <pcl::Normal>::Ptr normals (new pcl::PointCloud <pcl::Normal>);
-  pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> normal_estimator;
-  normal_estimator.setSearchMethod (tree);
-  normal_estimator.setInputCloud (cloud_without_plane);
-  normal_estimator.setKSearch (100);
-  normal_estimator.compute (*normals);
+	  /*pass_window.setInputCloud (cloud);
+	  pass_window.setFilterFieldName ("x");
+	  pass_window.setFilterLimits (-0.85, 0.85);
+	  //pass_window.setFilterLimitsNegative (true);
+	  pass_window.filter (*cloud);*/
 
-  /*pcl::IndicesPtr indices (new std::vector <int>);
-  pcl::PassThrough<pcl::PointXYZ> pass2;
-  pass2.setInputCloud (cloud_without_plane);
-  pass2.setFilterFieldName ("z");
-  pass2.setFilterLimits (0.0, 1.0);
-  pass2.filter (*indices);*/
+	  pass_window.setInputCloud (cloud);
+	  pass_window.setFilterFieldName ("y");
+	  pass_window.setFilterLimits (-0.55, 0.55);
+	  //pass_window.setFilterLimitsNegative (true);
+	  pass_window.filter (*cloud);
 
-  pcl::RegionGrowing<pcl::PointXYZ, pcl::Normal> reg;
-  reg.setMinClusterSize (1000);
-  reg.setMaxClusterSize (7500);
-  reg.setSearchMethod (tree);
-  reg.setNumberOfNeighbours (30);
-  reg.setInputCloud (cloud_without_plane);
-  //reg.setIndices (indices);
-  reg.setInputNormals (normals);
-  reg.setSmoothnessThreshold (11.0 / 180.0 * M_PI);
-  reg.setCurvatureThreshold (10.0);
+	  /*if (ros::Time::now() - actual_time > (ros::Duration)(30))
+	  {
+	    actual_time = ros::Time::now();
+	    transform_matrix = get_matrix(cloud, &z_after_rotation);
+	    ROS_INFO_STREAM("Segmentation done.");
+	  }
+	 
+	  // Transform the point cloud (if sensor angle is 90 degrees, skip this)
+	  pcl::PointCloud<pcl::PointXYZ>::Ptr transformed_cloud (new pcl::PointCloud<pcl::PointXYZ> ());
+	  pcl::transformPointCloud (*cloud, *transformed_cloud, transform_matrix);
+	  
+	  // Plane removal
+	  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_without_plane (new pcl::PointCloud<pcl::PointXYZ> ());
 
-  std::vector <pcl::PointIndices> clusters;
-  reg.extract (clusters); 
-  
-  //ROS_INFO_STREAM("Found " << clusters.size() << " objects."); 
+	  // Create the filtering object
+	  pcl::PassThrough<pcl::PointXYZ> pass;
+	  //pass.setInputCloud (transformed_cloud);
+	  pass.setInputCloud (cloud);
+	  //pass.setFilterFieldName ("z");
+	  pass.setFilterFieldName ("y");
+	  //pass.setFilterLimits (z_after_rotation-0.03, z_after_rotation+0.02);
+	  pass.setFilterLimits (0.35-0.035, 0.35+0.035);
+	  pass.setFilterLimitsNegative (true);
+	  pass.filter (*cloud_without_plane);
 
-  bool found_known_object = false;
-  //std_msgs::Bool found_objects;
-  float nav_goal_x, nav_goal_y, nav_goal_orientation;
-  int point_cloud_index;
-  std::string obj_id;
 
-  for (int i = 0; i < clusters.size() && !start_manipulating; i++)
-  {
-    //ROS_INFO_STREAM("\n\n");
-    //ROS_INFO_STREAM("Cluster has " << clusters[i].indices.size() << " points");
+	  // Find remaining objects
+	  pcl::search::Search<pcl::PointXYZ>::Ptr tree = boost::shared_ptr<pcl::search::Search<pcl::PointXYZ> > (new pcl::search::KdTree<pcl::PointXYZ>);
+	  pcl::PointCloud <pcl::Normal>::Ptr normals (new pcl::PointCloud <pcl::Normal>);
+	  pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> normal_estimator;
+	  normal_estimator.setSearchMethod (tree);
+	  normal_estimator.setInputCloud (cloud_without_plane);
+	  normal_estimator.setKSearch (100);
+	  normal_estimator.compute (*normals);
 
-    Eigen::Vector4f centroid;
+	  pcl::IndicesPtr indices (new std::vector <int>);
+	  pcl::PassThrough<pcl::PointXYZ> pass2;
+	  pass2.setInputCloud (cloud_without_plane);
+	  pass2.setFilterFieldName ("z");
+	  pass2.setFilterLimits (0.0, 1.0);
+	  pass2.filter (*indices);*/
 
-    pcl::compute3DCentroid (*cloud_without_plane, clusters[i], centroid);
- 
-    //ROS_INFO_STREAM("Computed centroid: " << centroid[0] << " " << centroid[1] << " " << centroid[2] << " " << centroid[3]);
+	  pcl::RegionGrowing<pcl::PointXYZ, pcl::Normal> reg;
+	  reg.setMinClusterSize (1000);
+	  reg.setMaxClusterSize (7500);
+	  reg.setSearchMethod (tree);
+	  reg.setNumberOfNeighbours (30);
+	  reg.setInputCloud (cloud_without_plane);
+	  //reg.setIndices (indices);
+	  reg.setInputNormals (normals);
+	  reg.setSmoothnessThreshold (11.0 / 180.0 * M_PI);
+	  reg.setCurvatureThreshold (10.0);
 
-    point_cloud_index = getIndex(centroid[0], centroid[1], centroid[2], input_cloud);
+	  std::vector <pcl::PointIndices> clusters;
+	  reg.extract (clusters); 
+	  
+	  //ROS_INFO_STREAM("Found " << clusters.size() << " objects."); 
 
-    if (point_cloud_index != -1) {
+	  bool found_known_object = false;
+	  //std_msgs::Bool found_objects;
+	  float nav_goal_x, nav_goal_y, nav_goal_orientation;
+	  int point_cloud_index;
+	  std::string obj_id;
 
-      int x_2d = point_cloud_index % 640;
-      int y_2d = point_cloud_index / 640;
+	  for (int i = 0; i < clusters.size() && !start_manipulating; i++)
+	  {
+	    //ROS_INFO_STREAM("\n\n");
+	    //ROS_INFO_STREAM("Cluster has " << clusters[i].indices.size() << " points");
 
-      //ROS_INFO_STREAM("Index of centroid in cloud: " << point_cloud_index);
-      //ROS_INFO_STREAM("Object num. " << i << ": y coord: " << y_2d);
-      //ROS_INFO_STREAM("Object num. " << i << ": x coord: " << x_2d); 
+	    Eigen::Vector4f centroid;
 
-      object_x_dist = centroid[0];
-      object_distance = centroid[2];
+	    pcl::compute3DCentroid (*cloud_without_plane, clusters[i], centroid);
+	 
+	    //ROS_INFO_STREAM("Computed centroid: " << centroid[0] << " " << centroid[1] << " " << centroid[2] << " " << centroid[3]);
 
-      nav_goal_x = centroid[2] - 0.2;
-      nav_goal_y = centroid[0] * (-1);
-      nav_goal_orientation = centroid[0] * (-1);
+	    point_cloud_index = getIndex(centroid[0], centroid[1], centroid[2], input_cloud);
 
-      std::vector<image_recognition_msgs::Recognition> recognitions;
-      sensor_msgs::Image image_req = imageCb(image, x_2d, y_2d);
+	    if (point_cloud_index != -1) {
 
-      /*ROS_INFO_STREAM("Image region info: Height: " << image_req.height << 
-                                        ", Width: " << image_req.width << 
-                                        ", Step: " << image_req.step << 
-                                        ", Data vector size: " << image_req.data.size() <<
-                                        ", file: " << file_num);*/
+	      int x_2d = point_cloud_index % 640;
+	      int y_2d = point_cloud_index / 640;
 
-      image_recognition_msgs::Recognize srv;
-      image_recognition_msgs::CategoryProbability best;
+	      //ROS_INFO_STREAM("Index of centroid in cloud: " << point_cloud_index);
+	      //ROS_INFO_STREAM("Object num. " << i << ": y coord: " << y_2d);
+	      //ROS_INFO_STREAM("Object num. " << i << ": x coord: " << x_2d); 
 
-      srv.request.image = image_req;
-      best.label = "unknown";
-      best.probability = UNKNOWN_PROB_TRESHHOLD;
+	      object_x_dist = centroid[0];
+	      object_distance = centroid[2];
 
-      /* Pause exploration, because recognizing takes a long time (seconds). */
-      /*ac.cancelAllGoals();
-      found_objects.data = true;
-      objects_pub.publish(found_objects);*/
+	      nav_goal_x = centroid[2] - 0.2;
+	      nav_goal_y = centroid[0] * (-1);
+	      nav_goal_orientation = centroid[0] * (-1);
 
-      // Try to recognize known objects
-      //ROS_INFO_STREAM("Starting recognition.");
+	      std::vector<image_recognition_msgs::Recognition> recognitions;
+	      sensor_msgs::Image image_req = imageCb(image, x_2d, y_2d);
 
-      if (client.call(srv)) 
-      {
-        recognitions = srv.response.recognitions;
+	      /*ROS_INFO_STREAM("Image region info: Height: " << image_req.height << 
+	                                        ", Width: " << image_req.width << 
+	                                        ", Step: " << image_req.step << 
+	                                        ", Data vector size: " << image_req.data.size() <<
+	                                        ", file: " << file_num);*/
 
-        for(std::vector<image_recognition_msgs::Recognition>::iterator i = recognitions.begin(); i != recognitions.end(); ++i) 
-        {
-          best.label = "unknown";
-          //best.probability = i->categorical_distribution.unknown_probability;
-          best.probability = UNKNOWN_PROB_TRESHHOLD;
+	      image_recognition_msgs::Recognize srv;
+	      image_recognition_msgs::CategoryProbability best;
 
-          for (unsigned int j = 0; j < i->categorical_distribution.probabilities.size(); j++) 
-          {
-            if (i->categorical_distribution.probabilities[j].probability > best.probability)
-              best = i->categorical_distribution.probabilities[j];
-          }
-        }
-        //ROS_INFO_STREAM("Finished recognition.");
-      }
-      else
-      {
-        //ROS_INFO_STREAM("Recognition Error!");
-      }
-      
-      if (best.label == "unknown") 
-      {
-        //found_objects.data = false;
-        //objects_pub.publish(found_objects);
+	      srv.request.image = image_req;
+	      best.label = "unknown";
+	      best.probability = UNKNOWN_PROB_TRESHHOLD;
 
-        //ROS_INFO_STREAM("BEST TIP: !---unknown objects---!");
-      }
-      else if (!found_known_object) 
-      {
-        found_known_object = true;
-        obj_id = best.label;
+	      /* Pause exploration, because recognizing takes a long time (seconds). */
+	      /*ac.cancelAllGoals();
+	      found_objects.data = true;
+	      objects_pub.publish(found_objects);*/
 
-        ROS_INFO_STREAM("BEST TIP: !---" << best.label << "---!, with probability: " << best.probability);
+	      // Try to recognize known objects
+	      //ROS_INFO_STREAM("Starting recognition.");
 
-        break;
-      }
-    } else	// if (index != -1) 
-      ROS_INFO_STREAM("Did not find index (ret -1)");
-  } // for()
+	      if (client.call(srv)) 
+	      {
+	        recognitions = srv.response.recognitions;
 
-  /*pcl::PointCloud <pcl::PointXYZRGB>::Ptr colored_cloud = reg.getColoredCloud ();
-  pcl::visualization::CloudViewer viewer ("Cluster viewer");
-  viewer.showCloud(colored_cloud);
-  while (!viewer.wasStopped ())
-  {
-  }*/
+	        for(std::vector<image_recognition_msgs::Recognition>::iterator i = recognitions.begin(); i != recognitions.end(); ++i) 
+	        {
+	          best.label = "unknown";
+	          //best.probability = i->categorical_distribution.unknown_probability;
+	          best.probability = UNKNOWN_PROB_TRESHHOLD;
 
-  if (found_known_object)
-  {
-    start_manipulating = true;
+	          for (unsigned int j = 0; j < i->categorical_distribution.probabilities.size(); j++) 
+	          {
+	            if (i->categorical_distribution.probabilities[j].probability > best.probability)
+	              best = i->categorical_distribution.probabilities[j];
+	          }
+	        }
+	        //ROS_INFO_STREAM("Finished recognition.");
+	      }
+	      else
+	      {
+	        //ROS_INFO_STREAM("Recognition Error!");
+	      }
+	      
+	      if (best.label == "unknown") 
+	      {
+	        //found_objects.data = false;
+	        //objects_pub.publish(found_objects);
 
-    ac.cancelAllGoals();
-    geometry_msgs::Twist base_cmd;
+	        //ROS_INFO_STREAM("BEST TIP: !---unknown objects---!");
+	      }
+	      else if (!found_known_object) 
+	      {
+	        found_known_object = true;
+	        obj_id = best.label;
 
-    int time = nav_goal_x/0.1;
-    ros::Rate loop_rate(4);
+	        ROS_INFO_STREAM("BEST TIP: !---" << best.label << "---!, with probability: " << best.probability);
 
-    ROS_INFO_STREAM("Going to object...");
+	        break;
+	      }
+	    } else	// if (index != -1) 
+	      ROS_INFO_STREAM("Did not find index (ret -1)");
+	  } // for()
 
-    for (int i = 0; i < time*5; i++)
-    {
-      //ROS_INFO_STREAM("For loop " << i << "th time");
-      loop_rate.sleep();
-      base_cmd.linear.x = 0.1;
-      //base_cmd.angular.z = 0.08 * nav_goal_y;
-      //base_cmd.angular.z = (time*5) * 0.0006 * nav_goal_y;
-      base_cmd.angular.z = nav_goal_y / ((time*5) * 0.24);
-      velocity_pub.publish(base_cmd);
-    }
+	  if (found_known_object)
+	  {
+	    start_manipulating = true;
 
-    base_cmd.linear.x = 0;
-    base_cmd.angular.z = 0;
-    velocity_pub.publish(base_cmd);
+	    ac.cancelAllGoals();
+	    geometry_msgs::Twist base_cmd;
 
-    ROS_INFO_STREAM("Goal accomplished, sending message!");
+	    int time = nav_goal_x/0.1;
+	    ros::Rate loop_rate(4);
 
-    std_msgs::String object_id;
-    object_id.data = obj_id;
-    objects_id_pub.publish(object_id);
- 
-    sleep(10);
-    //start_manipulating = false;
-    //found_known_object = false;
- 
-    /*move_base_msgs::MoveBaseGoal goal;
+	    ROS_INFO_STREAM("Going to object...");
 
-    goal.target_pose.header.frame_id = "base_footprint";
-    goal.target_pose.header.stamp = ros::Time::now();
+	    for (int i = 0; i < time*5; i++)
+	    {
+	      //ROS_INFO_STREAM("For loop " << i << "th time");
+	      loop_rate.sleep();
+	      base_cmd.linear.x = 0.1;
+	      //base_cmd.angular.z = 0.08 * nav_goal_y;
+	      //base_cmd.angular.z = (time*5) * 0.0006 * nav_goal_y;
+	      base_cmd.angular.z = nav_goal_y / ((time*5) * 0.24);
+	      velocity_pub.publish(base_cmd);
+	    }
 
-    goal.target_pose.pose.position.x = nav_goal_x;
-    //goal.target_pose.pose.position.y = nav_goal_y;
-    //goal.target_pose.pose.orientation.y = nav_goal_orientation;
-    goal.target_pose.pose.orientation.w = 1.0;
+	    base_cmd.linear.x = 0;
+	    base_cmd.angular.z = 0;
+	    velocity_pub.publish(base_cmd);
 
-    actionlib::SimpleClientGoalState state = actionlib::SimpleClientGoalState::ABORTED;
-   
-    while(state != actionlib::SimpleClientGoalState::SUCCEEDED)
-    {
-      ac.cancelAllGoals();
-      ac.sendGoal(goal);
+	    ROS_INFO_STREAM("Goal accomplished, sending message!");
 
-      ROS_INFO("Waiting for goal to accomplish...");
-
-      ac.waitForResult();
-
-      state = ac.getState();
-
-      if (state == actionlib::SimpleClientGoalState::SUCCEEDED)
-        ROS_INFO_STREAM("The robot moved to the object.");
-      else if (state == actionlib::SimpleClientGoalState::PENDING)
-        ROS_INFO_STREAM("A problem occured while moving to the object, code: PENDING");
-      else if (state == actionlib::SimpleClientGoalState::ACTIVE)
-        ROS_INFO_STREAM("A problem occured while moving to the object, code: ACTIVE");
-      else if (state == actionlib::SimpleClientGoalState::PREEMPTED)
-        ROS_INFO_STREAM("A problem occured while moving to the object, code: PREEMPTED");
-      else if (state == actionlib::SimpleClientGoalState::ABORTED)
-        ROS_INFO_STREAM("A problem occured while moving to the object, code: ABORTED");
-      else if (state == actionlib::SimpleClientGoalState::REJECTED)
-        ROS_INFO_STREAM("A problem occured while moving to the object, code: REJECTED");
-      else if (state == actionlib::SimpleClientGoalState::RECALLED)
-        ROS_INFO_STREAM("A problem occured while moving to the object, code: RECALLED");
-      else if (state == actionlib::SimpleClientGoalState::LOST)
-        ROS_INFO_STREAM("A problem occured while moving to the object, code: LOST");
-      else
-        ROS_INFO_STREAM("An unknown problem occured while accomplishing the goal.");
-    }*/
-  } 
-  else /* Continue with exploring */
-  {
-    ROS_INFO_STREAM("No known objects, moving.");
-    found_objects.data = false;
-    objects_pub.publish(found_objects);
-    sleep(4);
-  }
-} //if (sync_pointcloud)
+	    std_msgs::String object_id;
+	    object_id.data = obj_id;
+	    objects_id_pub.publish(object_id);
+	 
+	    sleep(10);
+	    //start_manipulating = false;
+	    //found_known_object = false;
+	  } 
+	  else /* Continue with exploring */
+	  {
+	    ROS_INFO_STREAM("No known objects, moving.");
+	    found_objects.data = false;
+	    objects_pub.publish(found_objects);
+	    sleep(4);
+	  }
+	} //if (sync_pointcloud)
 }
 
 int main (int argc, char** argv)
@@ -592,6 +543,10 @@ int main (int argc, char** argv)
   velocity_pub = n.advertise<geometry_msgs::Twist>("mobile_base/commands/velocity", 1000);
   objects_id_pub = n.advertise<std_msgs::String>("object_id", 1000);
 
+
+/* The node has to subscribe to both point cloud and image topics, as the image recognition node
+ * takes only images as the input not point clouds.
+ */
   //ros::Subscriber sub = n.subscribe<sensor_msgs::PointCloud2> ("/camera/depth/points", 1, boost::bind(object_detector, _1, boost::ref(client), boost::ref(n)));
   //ros::Subscriber sub = n.subscribe<sensor_msgs::Image> ("/camera/rgb/image_raw", 1, boost::bind(object_detector, _1, boost::ref(client), boost::ref(n)));
   message_filters::Subscriber<sensor_msgs::PointCloud2> depth_sub(n, "/camera/depth/points", 1);
