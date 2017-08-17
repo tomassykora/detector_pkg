@@ -1,13 +1,21 @@
 <launch>
   <master auto="start"/>
 
+  <node name="map_server" pkg="map_server" type="map_server" args="/home/but/catkin_ws/src/kobuki_2dnav/new_map.pgm 0.05"/>
+
+  <include file="$(find amcl)/examples/amcl_omni.launch" />
 
   <node pkg="move_base" type="move_base" respawn="false" name="move_base" output="screen">
+    <rosparam file="$(find kobuki_2dnav)/move_base_params.yaml" command="load" />
+
     <rosparam file="$(find kobuki_2dnav)/costmap_common_params.yaml" command="load" ns="global_costmap" />
     <rosparam file="$(find kobuki_2dnav)/costmap_common_params.yaml" command="load" ns="local_costmap" />
     <rosparam file="$(find kobuki_2dnav)/local_costmap_params.yaml" command="load" />
     <rosparam file="$(find kobuki_2dnav)/global_costmap_params.yaml" command="load" />
-    <rosparam file="$(find kobuki_2dnav)/base_local_planner_params.yaml" command="load" />
+
+    <rosparam file="$(find kobuki_2dnav)/dwa_local_planner_params.yaml" command="load" />
+    <rosparam file="$(find kobuki_2dnav)/global_planner_params.yaml" command="load" />
+
     <remap from="/cmd_vel" to="/mobile_base/commands/velocity"/>
   </node>
 
